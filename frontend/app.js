@@ -2,6 +2,11 @@
 
 const $ = (id) => document.getElementById(id);
 
+// Base des appels API : location.origin ne contient JAMAIS les identifiants,
+// contrairement à l'URL de la page (http://user:mdp@hote) — fetch() refuse les
+// URL avec identifiants, donc les chemins relatifs planteraient dans ce cas.
+const API = location.origin;
+
 const EXAMPLES = [
   "de quoi parle cette vidéo ?",
   "quel est le sujet principal ?",
@@ -35,7 +40,7 @@ async function doSearch(query) {
 
   let data;
   try {
-    const res = await fetch(`/search?q=${encodeURIComponent(query)}&limit=15`);
+    const res = await fetch(`${API}/search?q=${encodeURIComponent(query)}&limit=15`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     data = await res.json();
   } catch (e) {
@@ -90,7 +95,7 @@ async function loadMedia() {
   const grid = $("media");
   let items = [];
   try {
-    items = await (await fetch("/media")).json();
+    items = await (await fetch(API + "/media")).json();
   } catch {
     grid.innerHTML = '<div class="empty">Bibliothèque indisponible.</div>';
     return;
@@ -126,7 +131,7 @@ async function loadFiles() {
   const list = $("files");
   let data;
   try {
-    data = await (await fetch("/ingest/browse")).json();
+    data = await (await fetch(API + "/ingest/browse")).json();
   } catch {
     list.innerHTML = '<div class="empty">Dossier d\'entrée inaccessible.</div>';
     return;
@@ -156,7 +161,7 @@ $("files").addEventListener("click", async (e) => {
   toast.textContent = "";
 
   try {
-    const res = await fetch("/ingest/local", {
+    const res = await fetch(API + "/ingest/local", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -190,11 +195,15 @@ async function loadRtvc(path) {
 
   let d;
   try {
-    const res = await fetch(`/ingest/rtvc/browse?path=${encodeURIComponent(path)}`);
+    const res = await fetch(`${API}/ingest/rtvc/browse?path=${encodeURIComponent(path)}`);
     d = await res.json();
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
   } catch (e) {
-    list.innerHTML = `<div class="empty"><b>NAS RTVC injoignable</b>${esc(String(e.message).slice(0, 160))}</div>`;
+    list.innerHTML = `<div class="empty"><b>NAS RTVC momentanément injoignable</b>
+      <span>${esc(String(e.message).slice(0, 140))}</span><br>
+      <button class="btn ghost" id="rtvc-retry" style="margin-top:.7rem" type="button">Réessayer</button>
+    </div>`;
+    document.getElementById("rtvc-retry")?.addEventListener("click", () => loadRtvc(rtvcPath));
     return;
   }
 
@@ -236,7 +245,7 @@ $("rtvc-list").addEventListener("click", async (e) => {
   btn.textContent = "Lancement…";
   toast.className = "toast";
   try {
-    const res = await fetch("/ingest/rtvc", {
+    const res = await fetch(API + "/ingest/rtvc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

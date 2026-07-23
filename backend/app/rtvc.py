@@ -222,10 +222,29 @@ class RTVCClient:
     # « Chemin non absolu ») et, pour /nas/download, le jeton en paramètre
     # ?token= et non dans l'en-tête Authorization.
     def nas_browse(self, path: str = "") -> Any:
+        """Liste un dossier du NAS.
+
+        L'API RTVC renvoie parfois des 500 passagers : on retente jusqu'à
+        3 fois (lecture seule, donc sans risque) avant d'abandonner.
+        """
         url = f"/nas/browse?path={quote(path, safe='/')}" if path else "/nas/browse"
-        r = self._authed("GET", url)
-        r.raise_for_status()
-        return r.json()
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                r = self._authed("GET", url)
+                r.raise_for_status()
+                return r.json()
+            except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+                # on ne retente que les pannes serveur (5xx) / réseau ;
+                # une 4xx (droits, chemin) est définitive
+                if (
+                    isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response.status_code < 500
+                ):
+                    raise
+                last_exc = exc
+                time.sleep(1.5 * (attempt + 1))
+        raise RTVCError(f"nas/browse indisponible après 3 essais : {last_exc}")
 
     def download_nas_file(
         self, nas_path: str, dest: Path, max_bytes: int | None = None

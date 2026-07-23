@@ -2,6 +2,9 @@
 
 const $ = (id) => document.getElementById(id);
 
+// Base API sans identifiants (voir app.js)
+const API = location.origin;
+
 const mediaId = parseInt(location.pathname.split("/").filter(Boolean).pop(), 10);
 const startAt = parseFloat(new URLSearchParams(location.search).get("t") || "0");
 const video = $("player");
@@ -35,7 +38,7 @@ function seekTo(seconds) {
 async function boot() {
   let meta = null;
   try {
-    meta = await (await fetch(`/media/${mediaId}/status`)).json();
+    meta = await (await fetch(`${API}/media/${mediaId}/status`)).json();
     $("title").textContent = meta.title || `Média #${mediaId}`;
     const bits = [meta.source === "local" ? "vidéo locale" : "RTVC"];
     if (meta.duration_ms) bits.push(`durée ${fmtTime(meta.duration_ms)}`);
@@ -48,10 +51,10 @@ async function boot() {
   // (fichier local ou téléchargé depuis le NAS RTVC). Sinon on demande à RTVC
   // un flux HLS via stream-token.
   if (meta && meta.has_playback) {
-    video.src = `/media/${mediaId}/video`;
+    video.src = `${API}/media/${mediaId}/video`;
   } else {
     try {
-      const res = await fetch(`/video/${mediaId}/stream-token`);
+      const res = await fetch(`${API}/video/${mediaId}/stream-token`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       video.src = (await res.json()).master_url;
     } catch (e) {
