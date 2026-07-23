@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Shared secret guarding the RTVC -> Kairos webhook (optional).
     webhook_secret: str = ""
 
+    # Mot de passe d'accès à TOUTE l'application (optionnel).
+    # Vide = accès libre (dev local). Défini = chaque requête exige le mot de
+    # passe (HTTP Basic, le navigateur affiche une petite fenêtre de connexion).
+    # Indispensable dès que Kairos est exposé sur Internet : l'explorateur RTVC
+    # utilise les identifiants NAS configurés côté serveur.
+    kairos_password: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -8,9 +8,11 @@ plus playback helpers that proxy RTVC's signed stream-token, and the demo UI.
 
 from __future__ import annotations
 
+import base64
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
@@ -27,6 +29,36 @@ app = FastAPI(
     version="2.0.0",
     description="Couche de recherche sémantique (Vosk + OCR + pgvector) au-dessus de l'API RTVC.",
 )
+
+# ---- Protection par mot de passe (si KAIROS_PASSWORD est défini) ----------
+# HTTP Basic : le navigateur mémorise le mot de passe après la 1re saisie, donc
+# la vidéo, les fichiers statiques et les appels /search passent ensuite sans
+# friction. /health reste ouvert (healthchecks Docker / supervision).
+_AUTH_EXEMPT = {"/health"}
+
+
+@app.middleware("http")
+async def _password_gate(request: Request, call_next):
+    pwd = settings.kairos_password
+    if pwd and request.url.path not in _AUTH_EXEMPT:
+        header = request.headers.get("authorization", "")
+        ok = False
+        if header.lower().startswith("basic "):
+            try:
+                decoded = base64.b64decode(header[6:]).decode("utf-8", "replace")
+                # accepte n'importe quel nom d'utilisateur ; seul le mot de
+                # passe compte (comparaison à temps constant)
+                candidate = decoded.split(":", 1)[1] if ":" in decoded else decoded
+                ok = secrets.compare_digest(candidate, pwd)
+            except Exception:  # noqa: BLE001
+                ok = False
+        if not ok:
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Kairos"'},
+            )
+    return await call_next(request)
+
 
 app.add_middleware(GZipMiddleware, minimum_size=600)
 app.add_middleware(

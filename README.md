@@ -127,6 +127,13 @@ docker compose -f docker-compose.prod.yml up -d
 Guide pas-à-pas pour le **NAS Synology (DS923+)** : [docs/DEPLOY-SYNOLOGY.md](docs/DEPLOY-SYNOLOGY.md)
 (images, Container Manager, reverse proxy HTTPS, RAM ≥ 8 Go recommandée).
 
+Guide **hébergement gratuit permanent (Oracle Cloud ARM, testeur à distance)** :
+[docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md).
+
+**Protection par mot de passe** : définir `KAIROS_PASSWORD` dans `.env`
+(obligatoire dès que l'app est exposée sur Internet — le navigateur demande le
+mot de passe une fois, `/health` reste ouvert pour la supervision).
+
 ## Diagnostic RTVC
 
 Vérifie en une commande si l'API RTVC **et son NAS** sont opérationnels pour
