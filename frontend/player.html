@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kairos — Lecteur</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="/"><b>Kairos</b><span>recherche sémantique vidéo</span></a>
+      <nav><a href="/">← Retour à la recherche</a></nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="player-layout">
+      <div>
+        <div class="video-shell">
+          <video id="player" controls playsinline preload="metadata"></video>
+        </div>
+        <h1 id="title" style="font-size:1.15rem;margin:.9rem 0 .2rem"></h1>
+        <p id="subtitle" style="color:var(--muted);font-size:.9rem;margin:0"></p>
+        <p id="player-error" class="toast err"></p>
+      </div>
+
+      <aside class="side">
+        <form class="searchbar" id="in-video-search" role="search">
+          <span class="icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+            </svg>
+          </span>
+          <input id="q" type="search" autocomplete="off"
+                 placeholder="Chercher dans cette vidéo…" aria-label="Chercher dans cette vidéo" />
+          <button type="submit">OK</button>
+        </form>
+        <div class="results" id="results">
+          <div class="empty">Posez une question pour sauter au bon moment.</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="/static/player.js"></script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+# Kairos — configuration PRODUCTION (Synology NAS / serveur).
+#
+# Différences avec le compose de dev :
+#  - pas de montage du code source ni de --reload (on utilise l'image construite)
+#  - redémarrage automatique (restart: unless-stopped)
+#  - plusieurs workers uvicorn pour l'API
+#  - le frontend est servi par le backend (pas de service séparé)
+#  - ports regroupés sous une seule entrée pour le reverse proxy DSM
+#
+# Lancement :  docker compose -f docker-compose.prod.yml up -d
+# (voir docs/DEPLOY-SYNOLOGY.md)
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: kairos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kairos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:-kairos}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kairos} -d ${POSTGRES_DB:-kairos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kairos-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    image: kairos-backend
+    container_name: kairos-backend
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kairos}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DATA_DIR: /data
+      FRONTEND_DIR: /frontend
+      MEDIA_INPUT_DIR: /media_in
+      RTVC_BASE_URL: ${RTVC_BASE_URL:-https://api.rtvc-media.com}
+      RTVC_USERNAME: ${RTVC_USERNAME}
+      RTVC_PASSWORD: ${RTVC_PASSWORD}
+      RTVC_OTP_CODE: ${RTVC_OTP_CODE:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    ports:
+      # Exposé sur l'hôte ; le reverse proxy DSM pointera dessus (HTTPS).
+      - "${KAIROS_PORT:-8090}:8000"
+    volumes:
+      - ./frontend:/frontend:ro
+      - media:/data
+      - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2}
+
+  worker:
+    build: ./backend
+    image: kairos-backend
+    container_name: kairos-worker
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kairos}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DATA_DIR: /data
+      RTVC_BASE_URL: ${RTVC_BASE_URL:-https://api.rtvc-media.com}
+      RTVC_USERNAME: ${RTVC_USERNAME}
+      RTVC_PASSWORD: ${RTVC_PASSWORD}
+      RTVC_OTP_CODE: ${RTVC_OTP_CODE:-}
+    volumes:
+      - media:/data
+      - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
+    # concurrency modéré : la transcription est gourmande en CPU/RAM
+    command: celery -A app.worker.celery_app worker --loglevel=warning --concurrency=${WORKER_CONCURRENCY:-1}
+
+volumes:
+  pgdata:
+  media:

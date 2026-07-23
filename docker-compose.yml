@@ -1,0 +1,92 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: kairos-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kairos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kairos}
+      POSTGRES_DB: ${POSTGRES_DB:-kairos}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kairos} -d ${POSTGRES_DB:-kairos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kairos-redis
+    # Pas d'exposition sur l'hôte : Redis ne sert qu'au backend et au worker,
+    # via le réseau interne de compose.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: kairos-backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD:-kairos}@db:5432/${POSTGRES_DB:-kairos}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DATA_DIR: /data
+      FRONTEND_DIR: /frontend
+      MEDIA_INPUT_DIR: /media_in
+      RTVC_BASE_URL: ${RTVC_BASE_URL:-https://api.rtvc-media.com}
+      RTVC_USERNAME: ${RTVC_USERNAME:-}
+      RTVC_PASSWORD: ${RTVC_PASSWORD:-}
+      RTVC_OTP_CODE: ${RTVC_OTP_CODE:-}
+      RTVC_VERIFY_SSL: ${RTVC_VERIFY_SSL:-true}
+      HLS_POLL_INTERVAL: ${HLS_POLL_INTERVAL:-5}
+      HLS_POLL_TIMEOUT: ${HLS_POLL_TIMEOUT:-900}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+    ports:
+      - "8090:8000"
+    volumes:
+      - ./backend:/app
+      - ./frontend:/frontend
+      - media:/data
+      - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build: ./backend
+    container_name: kairos-worker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD:-kairos}@db:5432/${POSTGRES_DB:-kairos}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DATA_DIR: /data
+      MEDIA_INPUT_DIR: /media_in
+      RTVC_BASE_URL: ${RTVC_BASE_URL:-https://api.rtvc-media.com}
+      RTVC_USERNAME: ${RTVC_USERNAME:-}
+      RTVC_PASSWORD: ${RTVC_PASSWORD:-}
+      RTVC_OTP_CODE: ${RTVC_OTP_CODE:-}
+      RTVC_VERIFY_SSL: ${RTVC_VERIFY_SSL:-true}
+      HLS_POLL_INTERVAL: ${HLS_POLL_INTERVAL:-5}
+      HLS_POLL_TIMEOUT: ${HLS_POLL_TIMEOUT:-900}
+    volumes:
+      - ./backend:/app
+      - media:/data
+      - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+
+volumes:
+  pgdata:
+  media:

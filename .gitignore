@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+data/
+media_in/
+*.log
+.DS_Store
+
+# PyCharm / IDE
+.idea/
+
+# Exports d'images Docker (déploiement)
+*.tar
+*.tar.gz
+
+# Vidéos et fichiers de test locaux
+*.mp4
+*.mkv
+*.ts
+*.webm

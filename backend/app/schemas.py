@@ -1,0 +1,52 @@
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class MediaOut(BaseModel):
+    rtvc_id: int
+    title: str | None
+    source: str
+    status: str
+    has_playback: bool
+    hls_ready: bool
+    duration_ms: int | None
+    error: str | None
+    processed_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class WebhookPayload(BaseModel):
+    media_id: int
+    title: str | None = None
+
+
+class ProcessResponse(BaseModel):
+    rtvc_id: int
+    task_id: str
+    status: str
+
+
+class SearchHit(BaseModel):
+    rtvc_id: int
+    title: str | None
+    source: str  # 'audio' | 'visual'
+    start_ms: int
+    start_seconds: float
+    end_ms: int
+    text: str
+    score: float           # cosine similarity in [0, 1], higher is better
+    deep_link: str         # /video/<rtvc_id>?t=<seconds>
+
+
+class SearchResponse(BaseModel):
+    query: str
+    hits: list[SearchHit]
+
+
+class StreamTokenResponse(BaseModel):
+    rtvc_id: int
+    master_url: str        # HLS URL to hand to Video.js
+    raw: dict              # raw RTVC payload (field names may vary)
