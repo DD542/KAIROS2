@@ -35,9 +35,7 @@ def media_status(rtvc_id: int, db: Session = Depends(get_db)):
     return pm
 
 
-@router.get("/media/{rtvc_id}/segments")
-def media_segments(rtvc_id: int, db: Session = Depends(get_db)):
-    """Transcription horodatée d'un média (pour le sous-titrage du lecteur)."""
+def _segments(db: Session, rtvc_id: int) -> list[dict]:
     from app.models import Transcription
     rows = db.execute(
         select(Transcription.start_ms, Transcription.end_ms, Transcription.text)
@@ -45,6 +43,98 @@ def media_segments(rtvc_id: int, db: Session = Depends(get_db)):
         .order_by(Transcription.start_ms)
     ).mappings().all()
     return [dict(r) for r in rows]
+
+
+@router.get("/media/{rtvc_id}/segments")
+def media_segments(rtvc_id: int, db: Session = Depends(get_db)):
+    """Transcription horodatée d'un média (pour le sous-titrage du lecteur)."""
+    return _segments(db, rtvc_id)
+
+
+def _fmt_ts(ms: int, sep: str) -> str:
+    h, rem = divmod(ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, milli = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}{sep}{milli:03d}"
+
+
+@router.get("/media/{rtvc_id}/transcript.{fmt}")
+def export_transcript(rtvc_id: int, fmt: str, db: Session = Depends(get_db)):
+    """Exporte la transcription en sous-titres (srt/vtt) ou texte (txt)."""
+    from fastapi.responses import PlainTextResponse
+    if fmt not in ("srt", "vtt", "txt"):
+        raise HTTPException(status_code=400, detail="format: srt, vtt ou txt")
+    segs = _segments(db, rtvc_id)
+    if not segs:
+        raise HTTPException(status_code=404, detail="aucune transcription")
+
+    if fmt == "txt":
+        body = "\n".join(s["text"] for s in segs) + "\n"
+        media_type = "text/plain"
+    elif fmt == "srt":
+        blocks = []
+        for i, s in enumerate(segs, 1):
+            blocks.append(
+                f"{i}\n{_fmt_ts(s['start_ms'], ',')} --> {_fmt_ts(s['end_ms'], ',')}\n{s['text']}\n"
+            )
+        body = "\n".join(blocks)
+        media_type = "application/x-subrip"
+    else:  # vtt
+        lines = ["WEBVTT", ""]
+        for s in segs:
+            lines.append(f"{_fmt_ts(s['start_ms'], '.')} --> {_fmt_ts(s['end_ms'], '.')}")
+            lines.append(s["text"])
+            lines.append("")
+        body = "\n".join(lines)
+        media_type = "text/vtt"
+
+    return PlainTextResponse(
+        body, media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="kairos-{rtvc_id}.{fmt}"'},
+    )
+
+
+@router.delete("/media/{rtvc_id}")
+def delete_media(rtvc_id: int, db: Session = Depends(get_db)):
+    """Supprime un média et toutes ses données IA (+ fichier de lecture)."""
+    from app.models import Embedding, OcrText, Transcription
+    from sqlalchemy import delete as sql_delete
+
+    pm = db.get(ProcessedMedia, rtvc_id)
+    if pm is None:
+        raise HTTPException(status_code=404, detail="media inconnu")
+    for model in (Transcription, OcrText, Embedding):
+        db.execute(sql_delete(model).where(model.rtvc_id == rtvc_id))
+    if pm.playback_path:
+        try:
+            Path(pm.playback_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+    db.delete(pm)
+    db.commit()
+    return {"deleted": rtvc_id}
+
+
+@router.post("/media/retry-failed")
+def retry_failed(db: Session = Depends(get_db)):
+    """Relance tous les médias en échec d'un coup."""
+    from app.worker.tasks import process_local, process_rtvc_nas
+    failed = db.execute(
+        select(ProcessedMedia).where(ProcessedMedia.status == "failed")
+    ).scalars().all()
+    n = 0
+    for pm in failed:
+        if not pm.local_path:
+            continue
+        pm.status = "pending"
+        pm.error = None
+        db.commit()
+        if pm.source == "rtvc-nas":
+            process_rtvc_nas.delay(pm.rtvc_id, pm.local_path, pm.title or str(pm.rtvc_id))
+        else:
+            process_local.delay(pm.rtvc_id, pm.local_path, pm.title or str(pm.rtvc_id))
+        n += 1
+    return {"relances": n}
 
 
 @router.post("/media/{rtvc_id}/retry", response_model=MediaOut)

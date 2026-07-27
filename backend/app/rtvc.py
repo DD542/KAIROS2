@@ -75,6 +75,10 @@ class RTVCClient:
         self._token: str | None = None
         self._token_exp: float = 0.0  # date d'expiration (epoch) du JWT en cache
         self._lock = threading.Lock()
+        # cache court des dossiers explorés : masque les 502 passagers de RTVC
+        # (on ressert le dernier résultat connu quand leur serveur a un hoquet)
+        self._browse_cache: dict[str, tuple[float, Any]] = {}
+        self._browse_ttl = 60.0
 
     # ---- auth -----------------------------------------------------------
     @staticmethod
@@ -258,7 +262,9 @@ class RTVCClient:
             try:
                 r = self._authed("GET", url)
                 r.raise_for_status()
-                return r.json()
+                data = r.json()
+                self._browse_cache[path] = (time.time(), data)  # mémorise
+                return data
             except (httpx.HTTPStatusError, httpx.TransportError) as exc:
                 # on ne retente que les pannes serveur (5xx) / réseau ;
                 # une 4xx (droits, chemin) est définitive
@@ -269,6 +275,10 @@ class RTVCClient:
                     raise
                 last_exc = exc
                 time.sleep(1.5 * (attempt + 1))
+        # RTVC a un hoquet : on ressert le dernier résultat connu s'il est récent
+        cached = self._browse_cache.get(path)
+        if cached and (time.time() - cached[0]) < self._browse_ttl:
+            return cached[1]
         raise RTVCError(f"nas/browse indisponible après 3 essais : {last_exc}")
 
     def list_videos_recursive(

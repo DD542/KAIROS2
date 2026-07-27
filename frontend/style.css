@@ -172,6 +172,7 @@ section { margin-top: 2.6rem; }
 }
 .hit-score { margin-left: auto; font-family: var(--mono); font-size: .78rem; color: var(--muted); }
 .hit-text { color: var(--muted); font-size: .95rem; line-height: 1.55; }
+.hit-text mark { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 .1rem; }
 
 .badge {
   font-size: .68rem; font-weight: 700; letter-spacing: .06em;
@@ -238,6 +239,12 @@ section { margin-top: 2.6rem; }
 }
 .btn:hover { filter: brightness(1.08); }
 .btn.ghost { background: none; color: var(--accent); }
+.btn.ghost.danger { color: var(--crit); border-color: transparent; padding: .2rem .5rem; }
+.btn.ghost.danger:hover { border-color: var(--crit); filter: none; }
+#media-filter {
+  padding: .35rem .7rem; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font-family: inherit; font-size: .88rem;
+}
 .btn:disabled { opacity: .5; cursor: default; }
 .field { display: flex; align-items: center; gap: .6rem; margin-bottom: .9rem; flex-wrap: wrap; }
 .field label { font-size: .86rem; color: var(--muted); }
@@ -264,6 +271,8 @@ section { margin-top: 2.6rem; }
   padding: .4rem .8rem; border-radius: 8px; text-align: center;
   pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.6);
 }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .9rem 0 0; }
+.actions .btn { text-decoration: none; font-size: .82rem; }
 .side { position: sticky; top: 5rem; }
 .side .searchbar { margin: 0 0 1rem; max-width: none; }
 .back { color: var(--muted); text-decoration: none; font-size: .88rem; }

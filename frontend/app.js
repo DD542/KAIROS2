@@ -30,6 +30,19 @@ function esc(str) {
 
 /* ---------------- recherche ---------------- */
 
+// Surligne, dans un texte déjà échappé, les mots de la requête (>2 lettres).
+function highlight(text, query) {
+  const safe = esc(text);
+  const words = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 2)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return safe;
+  const re = new RegExp(`(${words.join("|")})`, "gi");
+  return safe.replace(re, "<mark>$1</mark>");
+}
+
 async function doSearch(query) {
   const box = $("results");
   const section = $("resultats");
@@ -67,7 +80,7 @@ async function doSearch(query) {
           <span class="hit-title">${esc(h.title || "média #" + h.rtvc_id)}</span>
           <span class="hit-score">${Math.round(h.score * 100)}%</span>
         </div>
-        <div class="hit-text">${esc(h.text)}</div>
+        <div class="hit-text">${highlight(h.text, query)}</div>
       </a>`;
     })
     .join("");
@@ -91,20 +104,33 @@ $("examples").addEventListener("click", (e) => {
 
 /* ---------------- bibliothèque ---------------- */
 
+let allMedia = [];
+
 async function loadMedia() {
-  const grid = $("media");
-  let items = [];
   try {
-    items = await (await fetch(API + "/media")).json();
+    allMedia = await (await fetch(API + "/media")).json();
   } catch {
-    grid.innerHTML = '<div class="empty">Bibliothèque indisponible.</div>';
+    $("media").innerHTML = '<div class="empty">Bibliothèque indisponible.</div>';
     return;
   }
+  const nbFailed = allMedia.filter((m) => m.status === "failed").length;
+  $("retry-failed").hidden = nbFailed === 0;
+  $("retry-failed").textContent = `Relancer les échoués (${nbFailed})`;
+  renderMedia();
+}
 
-  $("media-count").textContent = items.length ? `${items.length}` : "";
+function renderMedia() {
+  const grid = $("media");
+  const q = ($("media-filter").value || "").toLowerCase();
+  const items = q
+    ? allMedia.filter((m) => (m.title || "").toLowerCase().includes(q))
+    : allMedia;
+
+  $("media-count").textContent = allMedia.length ? `${allMedia.length}` : "";
   if (!items.length) {
-    grid.innerHTML =
-      '<div class="empty"><b>Rien d\'indexé pour l\'instant</b>Choisissez une vidéo dans « Indexer une vidéo » ci-dessous.</div>';
+    grid.innerHTML = q
+      ? '<div class="empty">Aucun média ne correspond au filtre.</div>'
+      : '<div class="empty"><b>Rien d\'indexé pour l\'instant</b>Choisissez une vidéo ci-dessous.</div>';
     return;
   }
 
@@ -115,12 +141,13 @@ async function loadMedia() {
       const retry = m.status === "failed"
         ? `<button class="btn ghost" data-retry="${m.rtvc_id}" type="button">Réessayer</button>`
         : "";
+      const del = `<button class="btn ghost danger" data-del="${m.rtvc_id}" title="Supprimer" type="button">✕</button>`;
       const inner = `<h3>${title}</h3>
         <div class="media-meta">
           <span class="state ${m.status}">${m.status}</span>
           <span>${m.source}</span>
           <span>${dur}</span>
-          ${retry}
+          ${retry}${del}
         </div>`;
       return m.status === "ready"
         ? `<a class="media-card" href="/video/${m.rtvc_id}">${inner}</a>`
@@ -129,19 +156,42 @@ async function loadMedia() {
     .join("");
 }
 
-// Bouton « Réessayer » sur les médias en échec
-$("media").addEventListener("click", async (e) => {
-  const btn = e.target.closest("button[data-retry]");
-  if (!btn) return;
-  e.preventDefault();
-  btn.disabled = true;
-  btn.textContent = "Relance…";
+$("media-filter").addEventListener("input", renderMedia);
+
+$("retry-failed").addEventListener("click", async () => {
+  $("retry-failed").disabled = true;
   try {
-    await fetch(`${API}/media/${btn.dataset.retry}/retry`, { method: "POST" });
+    await fetch(`${API}/media/retry-failed`, { method: "POST" });
     loadMedia();
-  } catch {
-    btn.disabled = false;
-    btn.textContent = "Réessayer";
+  } finally {
+    $("retry-failed").disabled = false;
+  }
+});
+
+// Boutons Réessayer / Supprimer sur les cartes
+$("media").addEventListener("click", async (e) => {
+  const retryBtn = e.target.closest("button[data-retry]");
+  const delBtn = e.target.closest("button[data-del]");
+  if (retryBtn) {
+    e.preventDefault();
+    retryBtn.disabled = true;
+    retryBtn.textContent = "Relance…";
+    try {
+      await fetch(`${API}/media/${retryBtn.dataset.retry}/retry`, { method: "POST" });
+      loadMedia();
+    } catch {
+      retryBtn.disabled = false;
+      retryBtn.textContent = "Réessayer";
+    }
+    return;
+  }
+  if (delBtn) {
+    e.preventDefault();
+    if (!confirm("Supprimer ce média et toutes ses données indexées ?")) return;
+    try {
+      await fetch(`${API}/media/${delBtn.dataset.del}`, { method: "DELETE" });
+      loadMedia();
+    } catch {}
   }
 });
 

@@ -68,9 +68,29 @@ async function boot() {
     $("player-error").textContent = "Le navigateur n'a pas pu lire ce flux vidéo.";
   });
 
+  // Liens d'export (le mot de passe est déjà en cache navigateur)
+  $("dl-srt").href = `${API}/media/${mediaId}/transcript.srt`;
+  $("dl-vtt").href = `${API}/media/${mediaId}/transcript.vtt`;
+  $("dl-txt").href = `${API}/media/${mediaId}/transcript.txt`;
+
   loadCaptions();
   if (startAt > 0) seekTo(startAt);
 }
+
+// Copier un lien qui rouvre la vidéo à l'instant courant
+$("copy-link").addEventListener("click", async () => {
+  const t = Math.floor(video.currentTime || 0);
+  const url = `${location.origin}/video/${mediaId}?t=${t}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    const b = $("copy-link");
+    const old = b.textContent;
+    b.textContent = "✓ Lien copié !";
+    setTimeout(() => (b.textContent = old), 1800);
+  } catch {
+    prompt("Copiez ce lien :", url);
+  }
+});
 
 /* ---------------- sous-titre du passage en cours ---------------- */
 
