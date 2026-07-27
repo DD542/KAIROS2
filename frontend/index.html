@@ -67,11 +67,11 @@
         </p>
         <div class="field">
           <label for="rtvc-seconds">Durée à traiter</label>
-          <input id="rtvc-seconds" type="number" min="10" step="10" value="180" />
-          <label>s</label>
+          <input id="rtvc-seconds" type="number" min="0" step="10" value="180" />
+          <label>s <small>(0 = entière)</small></label>
           <label for="rtvc-mb" style="margin-left:.6rem">Télécharger au plus</label>
-          <input id="rtvc-mb" type="number" min="10" step="10" value="120" />
-          <label>Mo</label>
+          <input id="rtvc-mb" type="number" min="0" step="10" value="120" />
+          <label>Mo <small>(0 = illimité)</small></label>
         </div>
         <div class="file-list" id="rtvc-list">
           <div class="loading">Connexion au NAS RTVC…</div>
@@ -92,7 +92,7 @@
         <div class="field">
           <label for="max-seconds">Durée à traiter</label>
           <input id="max-seconds" type="number" min="10" step="10" value="180" />
-          <label>secondes <small>(limiter accélère la démonstration)</small></label>
+          <label>secondes <small>(0 = vidéo entière ; limiter accélère la démo)</small></label>
         </div>
         <div class="file-list" id="files">
           <div class="loading">Lecture du dossier…</div>

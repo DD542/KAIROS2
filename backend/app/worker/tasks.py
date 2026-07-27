@@ -14,9 +14,13 @@ so re-delivery of the webhook is safe.
 
 from __future__ import annotations
 
+import logging
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger("kairos.pipeline")
 
 from sqlalchemy import func, select
 
@@ -100,6 +104,8 @@ def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
 
 def _ingest_file(db, pm, media_id: int, src: Path, max_seconds: int | None) -> dict:
     """Étapes communes une fois le fichier disponible localement."""
+    t0 = time.monotonic()
+    log.info("indexation media=%s source=%s : debut", media_id, pm.source)
     work = _work_dir(media_id)
     playback = Path(settings.data_dir) / "playback" / f"{media_id}.mp4"
     if not playback.exists():
@@ -114,8 +120,11 @@ def _ingest_file(db, pm, media_id: int, src: Path, max_seconds: int | None) -> d
     pm.processed_at = datetime.now(timezone.utc)
     db.commit()
     shutil.rmtree(work, ignore_errors=True)
+    dt = round(time.monotonic() - t0, 1)
+    log.info("indexation media=%s : OK en %ss (%s segments, %s ocr)",
+             media_id, dt, n_tr, n_ocr)
     return {"media_id": media_id, "status": "ready",
-            "transcriptions": n_tr, "ocr_texts": n_ocr}
+            "transcriptions": n_tr, "ocr_texts": n_ocr, "duree_s": dt}
 
 
 # Reprise auto en cas d'échec transitoire (RTVC momentanément down, réseau…) :

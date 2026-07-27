@@ -68,7 +68,32 @@ async function boot() {
     $("player-error").textContent = "Le navigateur n'a pas pu lire ce flux vidéo.";
   });
 
+  loadCaptions();
   if (startAt > 0) seekTo(startAt);
+}
+
+/* ---------------- sous-titre du passage en cours ---------------- */
+
+let segments = [];
+
+async function loadCaptions() {
+  try {
+    segments = await (await fetch(`${API}/media/${mediaId}/segments`)).json();
+  } catch {
+    segments = [];
+  }
+  if (!segments.length) return;
+  const cap = $("caption");
+  video.addEventListener("timeupdate", () => {
+    const ms = video.currentTime * 1000;
+    const seg = segments.find((s) => ms >= s.start_ms && ms < s.end_ms);
+    if (seg) {
+      cap.textContent = seg.text;
+      cap.hidden = false;
+    } else {
+      cap.hidden = true;
+    }
+  });
 }
 
 /* ---------------- recherche dans la vidéo ---------------- */

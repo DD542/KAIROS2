@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     hls_poll_timeout: float = 900.0    # 15 min max wait for RTVC transcode
 
     # ---- Local AI pipeline ----
-    vosk_model_path: str = "/opt/models/vosk-fr"
+    # Transcription faster-whisper. "small" = bon compromis qualité/vitesse CPU
+    # ("base" plus rapide/moins précis, "medium" plus précis/plus lent).
+    whisper_model: str = "small"
+    whisper_compute_type: str = "int8"  # quantifié pour la vitesse CPU
     # Modèle MULTILINGUE : indispensable pour du contenu français. Même
     # dimension (384) que all-MiniLM-L6-v2, donc schéma pgvector inchangé.
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

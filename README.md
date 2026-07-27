@@ -16,15 +16,16 @@ endpoints RTVC. 100 % souverain : audio et images ne quittent pas le serveur.
 | Backend API | FastAPI |
 | Base vectorielle | PostgreSQL + pgvector |
 | File d'attente | Celery + Redis |
-| Transcription | **Vosk** (modèle FR, CPU) |
+| Transcription | **faster-whisper** (modèle `small`, FR, CPU int8) |
 | OCR | Tesseract (FR) |
 | Embeddings | sentence-transformers `all-MiniLM-L6-v2` (384 d) |
 | Vidéo / HLS / stream | **délégué à RTVC** (`api.rtvc-media.com`) |
 | Frontend | Video.js (HLS via stream-token RTVC) |
 
-> **Vosk vs Whisper.** MVP en Vosk (léger, CPU, souverain). La présentation vise
-> **WhisperX** (~100 ms) en prod : remplacer `app/pipeline/transcribe.py` (même
-> contrat `list[Segment]`). Voir `docs/ARCHITECTURE.md`.
+> **Transcription.** Kairos utilise **faster-whisper** (CTranslate2, int8) :
+> précis sur le français réel, ponctuation/casse correctes, tout en local sur
+> CPU. Modèle réglable via `WHISPER_MODEL` (`base`/`small`/`medium`). Le module
+> `app/pipeline/transcribe.py` respecte le contrat `list[Segment]`.
 
 ## Démarrage
 
@@ -68,6 +69,9 @@ Le 1er build télécharge le modèle Vosk FR (~45 Mo) + MiniLM. Ensuite :
 | GET  | `/ingest/browse` | vidéos disponibles dans le dossier local |
 | POST | `/ingest/local` | indexer un fichier local |
 | GET  | `/media/{id}/video` | flux vidéo d'un média local (Range/seek) |
+| GET  | `/media/{id}/segments` | transcription horodatée (sous-titres du lecteur) |
+| POST | `/media/{id}/retry` | relancer une indexation échouée |
+| GET  | `/stats` | compteurs d'exploitation (médias, index, durée moyenne) |
 | GET  | `/search?q=&media_id=&limit=` | recherche sémantique hybride |
 | GET  | `/media` | médias indexés + statut |
 | GET  | `/media/{rtvc_id}/status` | statut d'indexation |

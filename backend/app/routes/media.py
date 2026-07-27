@@ -35,6 +35,18 @@ def media_status(rtvc_id: int, db: Session = Depends(get_db)):
     return pm
 
 
+@router.get("/media/{rtvc_id}/segments")
+def media_segments(rtvc_id: int, db: Session = Depends(get_db)):
+    """Transcription horodatée d'un média (pour le sous-titrage du lecteur)."""
+    from app.models import Transcription
+    rows = db.execute(
+        select(Transcription.start_ms, Transcription.end_ms, Transcription.text)
+        .where(Transcription.rtvc_id == rtvc_id)
+        .order_by(Transcription.start_ms)
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
 @router.post("/media/{rtvc_id}/retry", response_model=MediaOut)
 def retry_media(rtvc_id: int, db: Session = Depends(get_db)):
     """Relance l'indexation d'un média (typiquement après un échec)."""

@@ -1,13 +1,10 @@
 FROM python:3.11-slim
 
-# System deps: ffmpeg (transcode + keyframes + audio extract), tesseract (+FR),
-# unzip/curl to fetch the Vosk model.
+# System deps: ffmpeg (transcode + keyframes + audio extract), tesseract (+FR).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         tesseract-ocr \
         tesseract-ocr-fra \
-        curl \
-        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,19 +16,12 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bake the Vosk small French model into the image (~45 MB) so the container
-# runs offline. Path is NOT a mounted volume, so it is never shadowed.
-ENV VOSK_MODEL_PATH=/opt/models/vosk-fr
-RUN mkdir -p /opt/models \
-    && curl -fsSL -o /tmp/vosk.zip \
-        https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip \
-    && unzip -q /tmp/vosk.zip -d /opt/models \
-    && mv /opt/models/vosk-model-small-fr-0.22 /opt/models/vosk-fr \
-    && rm /tmp/vosk.zip
-
-# Bake the sentence-transformers model into the image so search works offline.
-# Multilingual model: required for French content (same 384 dimensions).
+# Modèles embarqués dans l'image pour un fonctionnement hors-ligne et sans
+# latence au 1er lancement : faster-whisper (transcription) + sentence-
+# transformers multilingue (recherche). HF_HOME centralise le cache.
 ENV HF_HOME=/opt/hf
+RUN python -c "from faster_whisper import WhisperModel; \
+WhisperModel('small', device='cpu', compute_type='int8')"
 RUN python -c "from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 

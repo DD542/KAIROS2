@@ -22,12 +22,12 @@ from sqlalchemy import text
 from app.config import settings
 from app.db import Base, engine
 from app.pages import render_page
-from app.routes import ingest, media, search, webhook
+from app.routes import ingest, media, search, stats, webhook
 
 app = FastAPI(
     title="Kairos",
     version="2.0.0",
-    description="Couche de recherche sémantique (Vosk + OCR + pgvector) au-dessus de l'API RTVC.",
+    description="Couche de recherche sémantique (faster-whisper + OCR + pgvector) au-dessus de l'API RTVC.",
 )
 
 # ---- Protection par mot de passe (si KAIROS_PASSWORD est défini) ----------
@@ -90,6 +90,7 @@ app.include_router(webhook.router)
 app.include_router(search.router)
 app.include_router(media.router)
 app.include_router(ingest.router)
+app.include_router(stats.router)
 
 
 @app.get("/health")
