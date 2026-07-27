@@ -73,9 +73,32 @@ class RTVCClient:
             follow_redirects=True,
         )
         self._token: str | None = None
+        self._token_exp: float = 0.0  # date d'expiration (epoch) du JWT en cache
         self._lock = threading.Lock()
 
     # ---- auth -----------------------------------------------------------
+    @staticmethod
+    def _jwt_exp(token: str) -> float:
+        """Lit le champ 'exp' du JWT (sans vérifier la signature) pour savoir
+        quand le rafraîchir. Renvoie 0 si illisible."""
+        try:
+            payload_b64 = token.split(".")[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)  # padding base64url
+            import base64
+            import json as _json
+            return float(_json.loads(base64.urlsafe_b64decode(payload_b64)).get("exp", 0))
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def _valid_token(self) -> str:
+        """Renvoie un jeton valide, en se reconnectant si absent ou proche de
+        l'expiration (marge de 60 s). Évite les 401 au lieu d'y réagir."""
+        now = time.time()
+        if self._token is None or now >= (self._token_exp - 60):
+            self._token = self._login()
+            self._token_exp = self._jwt_exp(self._token) or (now + 3600)
+        return self._token
+
     def _login(self) -> str:
         if not settings.rtvc_username or not settings.rtvc_password:
             raise RTVCError("RTVC_USERNAME / RTVC_PASSWORD not configured")
@@ -97,9 +120,11 @@ class RTVCClient:
 
     def _auth_headers(self, force: bool = False) -> dict[str, str]:
         with self._lock:
-            if force or self._token is None:
+            if force:
                 self._token = self._login()
-            return {"Authorization": f"Bearer {self._token}"}
+                self._token_exp = self._jwt_exp(self._token) or (time.time() + 3600)
+                return {"Authorization": f"Bearer {self._token}"}
+            return {"Authorization": f"Bearer {self._valid_token()}"}
 
     def _authed(self, method: str, url: str, **kw) -> httpx.Response:
         """Call an authenticated endpoint, refreshing the token once on 401."""
@@ -263,9 +288,11 @@ class RTVCClient:
 
         def _token(force: bool = False) -> str:
             with self._lock:
-                if force or self._token is None:
+                if force:
                     self._token = self._login()
-                return self._token
+                    self._token_exp = self._jwt_exp(self._token) or (time.time() + 3600)
+                    return self._token
+                return self._valid_token()
 
         for attempt in range(2):
             token = _token(force=(attempt == 1))

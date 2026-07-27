@@ -112,11 +112,15 @@ async function loadMedia() {
     .map((m) => {
       const title = esc(m.title || `média #${m.rtvc_id}`);
       const dur = m.duration_ms ? fmtTime(m.duration_ms) : "—";
+      const retry = m.status === "failed"
+        ? `<button class="btn ghost" data-retry="${m.rtvc_id}" type="button">Réessayer</button>`
+        : "";
       const inner = `<h3>${title}</h3>
         <div class="media-meta">
           <span class="state ${m.status}">${m.status}</span>
           <span>${m.source}</span>
           <span>${dur}</span>
+          ${retry}
         </div>`;
       return m.status === "ready"
         ? `<a class="media-card" href="/video/${m.rtvc_id}">${inner}</a>`
@@ -124,6 +128,22 @@ async function loadMedia() {
     })
     .join("");
 }
+
+// Bouton « Réessayer » sur les médias en échec
+$("media").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-retry]");
+  if (!btn) return;
+  e.preventDefault();
+  btn.disabled = true;
+  btn.textContent = "Relance…";
+  try {
+    await fetch(`${API}/media/${btn.dataset.retry}/retry`, { method: "POST" });
+    loadMedia();
+  } catch {
+    btn.disabled = false;
+    btn.textContent = "Réessayer";
+  }
+});
 
 /* ---------------- ingestion locale ---------------- */
 

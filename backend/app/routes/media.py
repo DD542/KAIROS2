@@ -35,6 +35,29 @@ def media_status(rtvc_id: int, db: Session = Depends(get_db)):
     return pm
 
 
+@router.post("/media/{rtvc_id}/retry", response_model=MediaOut)
+def retry_media(rtvc_id: int, db: Session = Depends(get_db)):
+    """Relance l'indexation d'un média (typiquement après un échec)."""
+    pm = db.get(ProcessedMedia, rtvc_id)
+    if pm is None:
+        raise HTTPException(status_code=404, detail="media inconnu")
+    if not pm.local_path:
+        raise HTTPException(status_code=400, detail="chemin source inconnu")
+
+    # import ici pour éviter un import circulaire au chargement du module
+    from app.worker.tasks import process_local, process_rtvc_nas
+
+    pm.status = "pending"
+    pm.error = None
+    db.commit()
+    if pm.source == "rtvc-nas":
+        process_rtvc_nas.delay(rtvc_id, pm.local_path, pm.title or str(rtvc_id))
+    else:
+        process_local.delay(rtvc_id, pm.local_path, pm.title or str(rtvc_id))
+    db.refresh(pm)
+    return pm
+
+
 @router.get("/tasks/{task_id}")
 def task_status(task_id: str):
     res = celery_app.AsyncResult(task_id)

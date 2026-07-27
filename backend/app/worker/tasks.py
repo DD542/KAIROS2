@@ -118,7 +118,13 @@ def _ingest_file(db, pm, media_id: int, src: Path, max_seconds: int | None) -> d
             "transcriptions": n_tr, "ocr_texts": n_ocr}
 
 
-@celery_app.task(bind=True, name="kairos.process_rtvc_nas")
+# Reprise auto en cas d'échec transitoire (RTVC momentanément down, réseau…) :
+# 3 tentatives espacées (30 s, 60 s), puis on abandonne définitivement.
+_RETRY = dict(autoretry_for=(Exception,), max_retries=2,
+              retry_backoff=30, retry_backoff_max=300, retry_jitter=True)
+
+
+@celery_app.task(bind=True, name="kairos.process_rtvc_nas", **_RETRY)
 def process_rtvc_nas(self, media_id: int, nas_path: str, title: str,
                      max_seconds: int | None = 180,
                      max_mb: int | None = 120) -> dict:
@@ -156,7 +162,7 @@ def process_rtvc_nas(self, media_id: int, nas_path: str, title: str,
         db.close()
 
 
-@celery_app.task(bind=True, name="kairos.process_local")
+@celery_app.task(bind=True, name="kairos.process_local", **_RETRY)
 def process_local(self, media_id: int, src_path: str, title: str,
                   max_seconds: int | None = None) -> dict:
     """Index a video straight from disk — no RTVC involved.
@@ -209,7 +215,7 @@ def process_local(self, media_id: int, src_path: str, title: str,
         db.close()
 
 
-@celery_app.task(bind=True, name="kairos.process_media")
+@celery_app.task(bind=True, name="kairos.process_media", **_RETRY)
 def process_media(self, media_id: int, title: str | None = None) -> dict:
     db = SessionLocal()
     rtvc = get_rtvc()
