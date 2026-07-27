@@ -133,6 +133,46 @@ _RETRY = dict(autoretry_for=(Exception,), max_retries=2,
               retry_backoff=30, retry_backoff_max=300, retry_jitter=True)
 
 
+LOCAL_ID_BASE = 900000  # identifiants internes des médias hors bibliothèque RTVC
+
+
+@celery_app.task(bind=True, name="kairos.index_all_rtvc")
+def index_all_rtvc(self, root: str = "", max_seconds: int | None = 180,
+                   max_mb: int | None = 120) -> dict:
+    """Scanne récursivement un dossier NAS et met en file l'indexation de
+    chaque vidéo pas encore indexée. Une seule tâche « chef » qui délègue une
+    tâche par vidéo — la recherche couvrira ensuite tout le dossier."""
+    from pathlib import PurePosixPath
+    rtvc = get_rtvc()
+    paths = rtvc.list_videos_recursive(root)
+    log.info("index-all root=%r : %s vidéos trouvées", root, len(paths))
+
+    db = SessionLocal()
+    queued = 0
+    try:
+        existing = {
+            p for (p,) in db.execute(select(ProcessedMedia.local_path)).all() if p
+        }
+        max_id = db.scalar(
+            select(func.max(ProcessedMedia.rtvc_id)).where(
+                ProcessedMedia.rtvc_id >= LOCAL_ID_BASE
+            )
+        ) or LOCAL_ID_BASE
+        for path in paths:
+            if path in existing:
+                continue  # déjà indexé (idempotence)
+            max_id += 1
+            title = PurePosixPath(path).stem
+            db.add(ProcessedMedia(rtvc_id=max_id, title=title, source="rtvc-nas",
+                                  local_path=path, status="pending"))
+            db.commit()
+            process_rtvc_nas.delay(max_id, path, title, max_seconds, max_mb)
+            queued += 1
+        return {"root": root, "trouvees": len(paths), "mises_en_file": queued}
+    finally:
+        db.close()
+
+
 @celery_app.task(bind=True, name="kairos.process_rtvc_nas", **_RETRY)
 def process_rtvc_nas(self, media_id: int, nas_path: str, title: str,
                      max_seconds: int | None = 180,

@@ -266,6 +266,42 @@ async function loadRtvc(path) {
     : '<div class="empty">Dossier vide (aucune vidéo ni sous-dossier).</div>';
 }
 
+// « Tout indexer » : lance le scan récursif du dossier courant.
+$("index-all").addEventListener("click", async () => {
+  const toast = $("rtvc-toast");
+  const btn = $("index-all");
+  const secs = parseInt($("rtvc-seconds").value, 10);
+  const mb = parseInt($("rtvc-mb").value, 10);
+  const where = rtvcPath || "/ (racine)";
+  if (!confirm(
+    `Indexer TOUTES les vidéos de « ${where} » et ses sous-dossiers ?\n\n` +
+    `Chaque vidéo est téléchargée puis transcrite (plusieurs minutes chacune). ` +
+    `Sur un gros dossier, cela peut prendre des heures. Continuer ?`
+  )) return;
+  toast.className = "toast";
+  toast.textContent = "Scan du dossier en cours…";
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/ingest/rtvc/index-all`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: rtvcPath,
+        max_seconds: isNaN(secs) ? 180 : secs,
+        max_mb: isNaN(mb) ? 120 : mb,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    toast.textContent = "Scan lancé : les vidéos du dossier (et sous-dossiers) s'indexent en arrière-plan. Suivez la progression dans « Bibliothèque indexée ».";
+    loadMedia();
+  } catch (e) {
+    toast.className = "toast err";
+    toast.textContent = `Échec du lancement : ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // Clic sur le fil d'Ariane (dans l'en-tête) : remonte au niveau choisi.
 $("rtvc-path").addEventListener("click", (e) => {
   const crumb = e.target.closest("a[data-dir]");

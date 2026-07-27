@@ -271,6 +271,31 @@ class RTVCClient:
                 time.sleep(1.5 * (attempt + 1))
         raise RTVCError(f"nas/browse indisponible après 3 essais : {last_exc}")
 
+    def list_videos_recursive(
+        self, root: str = "", max_depth: int = 6, max_files: int = 300
+    ) -> list[str]:
+        """Parcourt un dossier NAS et ses sous-dossiers, renvoie les chemins de
+        toutes les vidéos trouvées. Bornes (profondeur, nombre) pour éviter un
+        parcours interminable. Les dossiers illisibles (403/500) sont ignorés."""
+        found: list[str] = []
+        # parcours en largeur ; chaque entrée = (chemin, profondeur)
+        stack: list[tuple[str, int]] = [(root, 0)]
+        while stack and len(found) < max_files:
+            path, depth = stack.pop()
+            try:
+                data = self.nas_browse(path)
+            except Exception:  # noqa: BLE001 - dossier illisible → on saute
+                continue
+            for it in data.get("items", []) if isinstance(data, dict) else []:
+                if it.get("isdir"):
+                    if depth < max_depth:
+                        stack.append((it.get("path"), depth + 1))
+                elif it.get("is_video") and it.get("path"):
+                    found.append(it["path"])
+                    if len(found) >= max_files:
+                        break
+        return found
+
     def download_nas_file(
         self, nas_path: str, dest: Path, max_bytes: int | None = None
     ) -> Path:

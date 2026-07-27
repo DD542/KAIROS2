@@ -100,6 +100,21 @@ def _reserve_media(db: Session, path: str, title: str, source: str) -> int:
     return media_id
 
 
+class IndexAllRequest(BaseModel):
+    path: str = ""
+    max_seconds: int | None = 180
+    max_mb: int | None = 120
+
+
+@router.post("/ingest/rtvc/index-all")
+def index_all_rtvc_route(req: IndexAllRequest):
+    """Lance en arrière-plan l'indexation de TOUTES les vidéos d'un dossier NAS
+    (et sous-dossiers). Renvoie aussitôt ; le suivi se fait dans la bibliothèque."""
+    from app.worker.tasks import index_all_rtvc
+    res = index_all_rtvc.delay(req.path, req.max_seconds, req.max_mb)
+    return {"task_id": res.id, "status": "scan en cours", "path": req.path or "/"}
+
+
 @router.post("/ingest/rtvc", response_model=ProcessResponse)
 def ingest_rtvc_nas(req: NasIngestRequest, db: Session = Depends(get_db)):
     """Indexe une vidéo du NAS RTVC à partir de son chemin de fichier."""
