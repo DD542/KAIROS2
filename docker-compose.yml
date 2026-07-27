@@ -86,7 +86,9 @@ services:
       - ./backend:/app
       - media:/data
       - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2
+    # concurrency=1 : Whisper (CTranslate2) est déjà multi-thread ; deux
+    # transcriptions en parallèle sursollicitent le CPU et ralentissent tout.
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
 
 volumes:
   pgdata:

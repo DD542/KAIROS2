@@ -15,6 +15,10 @@ media_in/
 *.tar
 *.tar.gz
 
+# Fichier parasite Windows (nom de périphérique réservé)
+nul
+tools/
+
 # Vidéos et fichiers de test locaux
 *.mp4
 *.mkv
