@@ -94,6 +94,36 @@ def export_transcript(rtvc_id: int, fmt: str, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/media/{rtvc_id}/thumbnail")
+def media_thumbnail(rtvc_id: int, t: float = 0.0, db: Session = Depends(get_db)):
+    """Vignette d'aperçu de la vidéo à l'instant ``t`` (secondes).
+
+    Générée à la demande depuis la copie de lecture, puis mise en cache disque :
+    la première demande coûte ~100 ms, les suivantes sont servies directement.
+    """
+    from app.pipeline import transcode
+
+    pm = db.get(ProcessedMedia, rtvc_id)
+    if pm is None or not pm.playback_path:
+        raise HTTPException(status_code=404, detail="vignette indisponible")
+    video = Path(pm.playback_path)
+    if not video.is_file():
+        raise HTTPException(status_code=404, detail="vidéo introuvable")
+
+    # cache par tranche de 5 s : évite de générer une image par milliseconde
+    bucket = int(max(t, 0) // 5 * 5)
+    cache = Path(settings.data_dir) / "thumbs" / f"{rtvc_id}_{bucket}.jpg"
+    if not cache.is_file():
+        try:
+            transcode.make_thumbnail(video, cache, at_seconds=bucket)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"génération vignette: {exc}")
+    return FileResponse(
+        cache, media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @router.delete("/media/{rtvc_id}")
 def delete_media(rtvc_id: int, db: Session = Depends(get_db)):
     """Supprime un média et toutes ses données IA (+ fichier de lecture)."""
@@ -110,6 +140,11 @@ def delete_media(rtvc_id: int, db: Session = Depends(get_db)):
             Path(pm.playback_path).unlink(missing_ok=True)
         except OSError:
             pass
+    # vignettes en cache de ce média (fichiers <id>_<seconde>.jpg)
+    thumbs = Path(settings.data_dir) / "thumbs"
+    if thumbs.is_dir():
+        for f in thumbs.glob(f"{rtvc_id}_*.jpg"):
+            f.unlink(missing_ok=True)
     db.delete(pm)
     db.commit()
     return {"deleted": rtvc_id}

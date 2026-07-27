@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # utilise les identifiants NAS configurés côté serveur.
     kairos_password: str = ""
 
+    # Origines autorisées à appeler l'API depuis un autre site (CORS), séparées
+    # par des virgules. Vide = aucune (recommandé) : l'interface Kairos est
+    # servie par le même serveur, elle n'a pas besoin de CORS.
+    cors_origins: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

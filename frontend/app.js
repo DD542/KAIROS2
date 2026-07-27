@@ -74,13 +74,18 @@ async function doSearch(query) {
         ? '<span class="badge visual">à l\'écran</span>'
         : '<span class="badge audio">parlé</span>';
       return `<a class="hit" href="/video/${h.rtvc_id}?t=${h.start_seconds}">
-        <div class="hit-head">
-          ${badge}
-          <span class="hit-time">${fmtTime(h.start_ms)}</span>
-          <span class="hit-title">${esc(h.title || "média #" + h.rtvc_id)}</span>
-          <span class="hit-score">${Math.round(h.score * 100)}%</span>
+        <img class="hit-thumb" loading="lazy" alt=""
+             src="${API}/media/${h.rtvc_id}/thumbnail?t=${h.start_seconds}"
+             onerror="this.remove()" />
+        <div class="hit-body">
+          <div class="hit-head">
+            ${badge}
+            <span class="hit-time">${fmtTime(h.start_ms)}</span>
+            <span class="hit-title">${esc(h.title || "média #" + h.rtvc_id)}</span>
+            <span class="hit-score">${Math.round(h.score * 100)}%</span>
+          </div>
+          <div class="hit-text">${highlight(h.text, query)}</div>
         </div>
-        <div class="hit-text">${highlight(h.text, query)}</div>
       </a>`;
     })
     .join("");

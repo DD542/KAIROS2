@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import base64
 import secrets
+import time
+from collections import defaultdict
 from pathlib import Path
+from threading import Lock
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,11 +39,43 @@ app = FastAPI(
 # friction. /health reste ouvert (healthchecks Docker / supervision).
 _AUTH_EXEMPT = {"/health"}
 
+# Anti-force brute : au-delà de N échecs sur la fenêtre, l'IP est temporisée.
+# Stockage en mémoire (suffisant pour une instance ; passer à Redis si plusieurs).
+_MAX_FAILS = 10
+_BAN_SECONDS = 300
+_fails: dict[str, list[float]] = defaultdict(list)
+_fails_lock = Lock()
+
+
+def _client_ip(request: Request) -> str:
+    # derrière un reverse proxy (DSM, Cloudflare), l'IP réelle est dans XFF
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "?"
+
+
+def _too_many_fails(ip: str) -> bool:
+    now = time.time()
+    with _fails_lock:
+        recent = [t for t in _fails[ip] if now - t < _BAN_SECONDS]
+        _fails[ip] = recent
+        return len(recent) >= _MAX_FAILS
+
+
+def _record_fail(ip: str) -> None:
+    with _fails_lock:
+        _fails[ip].append(time.time())
+
 
 @app.middleware("http")
 async def _password_gate(request: Request, call_next):
     pwd = settings.kairos_password
     if pwd and request.url.path not in _AUTH_EXEMPT:
+        ip = _client_ip(request)
+        if _too_many_fails(ip):
+            return Response(status_code=429, content="Trop de tentatives. Réessayez plus tard.")
+
         header = request.headers.get("authorization", "")
         ok = False
         if header.lower().startswith("basic "):
@@ -53,20 +88,34 @@ async def _password_gate(request: Request, call_next):
             except Exception:  # noqa: BLE001
                 ok = False
         if not ok:
+            _record_fail(ip)
             return Response(
                 status_code=401,
                 headers={"WWW-Authenticate": 'Basic realm="Kairos"'},
             )
-    return await call_next(request)
+    response = await call_next(request)
+    # En-têtes de sécurité (défense en profondeur)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    return response
 
 
 app.add_middleware(GZipMiddleware, minimum_size=600)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+# CORS : par défaut AUCUNE origine externe autorisée. Avec l'authentification
+# HTTP Basic (que le navigateur rejoue automatiquement), un "*" permettrait à
+# n'importe quel site de piloter Kairos au nom de l'utilisateur connecté (CSRF).
+# Renseigner CORS_ORIGINS uniquement si une app tierce doit appeler l'API.
+_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.on_event("startup")

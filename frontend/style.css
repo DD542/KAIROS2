@@ -163,6 +163,14 @@ section { margin-top: 2.6rem; }
 .hit:hover {
   transform: translateY(-1px); border-color: var(--accent); box-shadow: var(--shadow);
 }
+/* vignette d'aperçu : la carte devient une grille [image | texte] */
+.hit { display: grid; grid-template-columns: auto 1fr; gap: .9rem; align-items: start; }
+.hit-thumb {
+  width: 7.5rem; aspect-ratio: 16 / 9; object-fit: cover;
+  border-radius: 8px; background: var(--surface-2); flex: none;
+}
+.hit-body { min-width: 0; }
+@media (max-width: 34rem) { .hit-thumb { display: none; } }
 .hit-head { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; margin-bottom: .4rem; }
 .hit-title { font-weight: 600; font-size: .93rem; }
 .hit-time {

@@ -72,6 +72,25 @@ def make_playback_mp4(src: Path, out_path: Path, max_seconds: int | None = None)
     return out_path
 
 
+def make_thumbnail(src: Path, out_path: Path, at_seconds: float, width: int = 320) -> Path:
+    """Extrait une image de la vidéo à un instant donné (vignette d'aperçu).
+
+    ``-ss`` avant ``-i`` = recherche rapide (seek sur les images clés), ce qui
+    rend la génération quasi instantanée même sur une vidéo longue.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _run([
+        "ffmpeg", "-y",
+        "-ss", f"{max(at_seconds, 0):.3f}",
+        "-i", str(src),
+        "-frames:v", "1",
+        "-vf", f"scale={width}:-2",
+        "-q:v", "5",
+        str(out_path),
+    ])
+    return out_path
+
+
 def extract_keyframes(src: Path, out_dir: Path) -> list[tuple[int, Path]]:
     """Extract one frame every ``keyframe_interval_seconds``.
 
