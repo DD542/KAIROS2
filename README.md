@@ -70,6 +70,10 @@ Le 1er build télécharge le modèle Vosk FR (~45 Mo) + MiniLM. Ensuite :
 | POST | `/ingest/local` | indexer un fichier local |
 | GET  | `/media/{id}/video` | flux vidéo d'un média local (Range/seek) |
 | GET  | `/media/{id}/segments` | transcription horodatée (sous-titres du lecteur) |
+| GET  | `/media/{id}/thumbnail?t=` | vignette d'aperçu à un instant (cache disque) |
+| GET  | `/media/{id}/transcript.{srt\|vtt\|txt}` | export sous-titres / texte |
+| DELETE | `/media/{id}` | supprimer un média et ses données |
+| POST | `/maintenance/cleanup` | supprimer les fichiers orphelins |
 | POST | `/media/{id}/retry` | relancer une indexation échouée |
 | GET  | `/stats` | compteurs d'exploitation (médias, index, durée moyenne) |
 | GET  | `/search?q=&media_id=&limit=` | recherche sémantique hybride |
@@ -133,6 +137,15 @@ Guide pas-à-pas pour le **NAS Synology (DS923+)** : [docs/DEPLOY-SYNOLOGY.md](d
 
 Guide **hébergement gratuit permanent (Oracle Cloud ARM, testeur à distance)** :
 [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md).
+
+### Sécurité (production)
+
+- **CORS fermé par défaut** : aucune origine tierce autorisée. N'ouvrir via
+  `CORS_ORIGINS` (liste séparée par des virgules) que si une app externe doit
+  appeler l'API — avec l'auth HTTP Basic, un `*` exposerait à du CSRF.
+- **Anti-force brute** : 10 échecs d'authentification par IP → HTTP 429 pendant
+  5 minutes (`X-Forwarded-For` pris en compte derrière un reverse proxy).
+- **En-têtes** : `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
 
 **Protection par mot de passe** : définir `KAIROS_PASSWORD` dans `.env`
 (obligatoire dès que l'app est exposée sur Internet — le navigateur demande le
