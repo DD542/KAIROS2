@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # c'est le filtre anti-bruit à l'indexation qui assure la qualité.
     search_min_score: float = 0.0
 
+    # Taille téléchargée en 1re passe pour un média RTVC : suffit pour la
+    # plupart des fichiers ; si le transcodage échoue (mp4 tronqué), le worker
+    # rapatrie le fichier entier automatiquement.
+    download_probe_mb: int = 300
+
     keyframe_interval_seconds: int = 3
     transcript_max_segment_seconds: float = 8.0
     transcript_gap_seconds: float = 0.8

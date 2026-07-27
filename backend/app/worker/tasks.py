@@ -69,13 +69,20 @@ def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
         db.commit()
 
     if _count(db, OcrText, media_id) == 0:
-        frames = transcode.extract_keyframes(video, work / "keyframes")
-        ocr_items = ocr.ocr_keyframes(frames)
-        db.add_all(
-            OcrText(rtvc_id=media_id, timestamp_ms=o.timestamp_ms, text=o.text)
-            for o in ocr_items
-        )
-        db.commit()
+        # L'OCR (visuel) est secondaire : s'il échoue (image illisible, format
+        # exotique…), on continue quand même — la transcription audio, elle,
+        # est déjà en base. Un média reste ainsi cherchable par la parole.
+        try:
+            frames = transcode.extract_keyframes(video, work / "keyframes")
+            ocr_items = ocr.ocr_keyframes(frames)
+            db.add_all(
+                OcrText(rtvc_id=media_id, timestamp_ms=o.timestamp_ms, text=o.text)
+                for o in ocr_items
+            )
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            log.warning("media=%s : OCR ignoré (%s)", media_id, exc)
 
     if _count(db, Embedding, media_id) == 0:
         trans = [t for t in db.execute(
@@ -194,11 +201,34 @@ def process_rtvc_nas(self, media_id: int, nas_path: str, title: str,
         db.commit()
 
         src = _work_dir(media_id) / "source"
+        rtvc = get_rtvc()
+
+        # Si l'utilisateur impose un cap, on le respecte tel quel. Sinon, on
+        # télécharge d'abord une portion (rapide) et on ne rapatrie le fichier
+        # ENTIER que si le transcodage échoue (cas des .mp4 dont l'index est en
+        # fin de fichier, illisibles s'ils sont tronqués). Fast pour la plupart,
+        # fiable pour tous.
+        cap_bytes = (max_mb * 1024 * 1024) if max_mb else settings.download_probe_mb * 1024 * 1024
+        capped = max_mb is None  # on a le droit de retélécharger en entier
+
         if not src.exists():
-            get_rtvc().download_nas_file(
-                nas_path, src, max_bytes=(max_mb * 1024 * 1024) if max_mb else None
-            )
-        return _ingest_file(db, pm, media_id, src, max_seconds)
+            rtvc.download_nas_file(nas_path, src, max_bytes=cap_bytes)
+        try:
+            return _ingest_file(db, pm, media_id, src, max_seconds)
+        except RuntimeError as ffmpeg_err:
+            if not capped:
+                raise
+            log.warning("media=%s : transcodage KO sur portion (%s) -> "
+                        "retelechargement complet", media_id, ffmpeg_err)
+            db.rollback()
+            src.unlink(missing_ok=True)
+            (Path(settings.data_dir) / "playback" / f"{media_id}.mp4").unlink(missing_ok=True)
+            rtvc.download_nas_file(nas_path, src, max_bytes=None)  # entier
+            pm = db.get(ProcessedMedia, media_id)
+            pm.status = "processing"
+            pm.error = None
+            db.commit()
+            return _ingest_file(db, pm, media_id, src, max_seconds)
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         pm = db.get(ProcessedMedia, media_id)
