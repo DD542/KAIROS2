@@ -254,30 +254,42 @@ class RTVCClient:
         L'API ignore l'en-tête Range et envoie tout le fichier ; on interrompt
         donc côté client après ``max_bytes`` — suffisant pour indexer un extrait
         sans rapatrier plusieurs centaines de Mo.
-        """
-        with self._lock:
-            if self._token is None:
-                self._token = self._login()
-            token = self._token
-        url = f"/nas/download?path={quote(nas_path, safe='/')}&token={token}"
 
+        Le jeton passé en ?token= expire (JWT). Sur un 401 « Token invalide »,
+        on force une reconnexion et on retente une fois : indispensable pour un
+        worker qui tourne longtemps.
+        """
         dest.parent.mkdir(parents=True, exist_ok=True)
-        written = 0
-        with self._client.stream("GET", url, timeout=None) as resp:
-            if resp.status_code >= 400:
-                resp.read()
-                raise RTVCError(
-                    f"nas/download {nas_path}: {resp.status_code} {resp.text[:200]}"
-                )
-            with dest.open("wb") as fh:
-                for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
-                    fh.write(chunk)
-                    written += len(chunk)
-                    if max_bytes is not None and written >= max_bytes:
-                        break
-        if written == 0:
-            raise RTVCError(f"nas/download {nas_path}: fichier vide")
-        return dest
+
+        def _token(force: bool = False) -> str:
+            with self._lock:
+                if force or self._token is None:
+                    self._token = self._login()
+                return self._token
+
+        for attempt in range(2):
+            token = _token(force=(attempt == 1))
+            url = f"/nas/download?path={quote(nas_path, safe='/')}&token={token}"
+            written = 0
+            with self._client.stream("GET", url, timeout=None) as resp:
+                if resp.status_code == 401 and attempt == 0:
+                    resp.read()
+                    continue  # jeton expiré → on se reconnecte et on retente
+                if resp.status_code >= 400:
+                    resp.read()
+                    raise RTVCError(
+                        f"nas/download {nas_path}: {resp.status_code} {resp.text[:200]}"
+                    )
+                with dest.open("wb") as fh:
+                    for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                        fh.write(chunk)
+                        written += len(chunk)
+                        if max_bytes is not None and written >= max_bytes:
+                            break
+            if written == 0:
+                raise RTVCError(f"nas/download {nas_path}: fichier vide")
+            return dest
+        raise RTVCError(f"nas/download {nas_path}: 401 après reconnexion")
 
     def _stream_to_file(self, url: str, dest: Path, authed: bool) -> None:
         headers = self._auth_headers() if authed else None
