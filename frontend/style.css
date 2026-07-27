@@ -146,6 +146,9 @@ section { margin-top: 2.6rem; }
 }
 .sec-head h2 { font-size: 1.05rem; margin: 0; letter-spacing: -.01em; }
 .sec-head .count { color: var(--muted); font-size: .85rem; font-family: var(--mono); }
+.sec-head .count a { color: var(--accent); text-decoration: none; }
+.sec-head .count a:hover { text-decoration: underline; }
+.crumb-sep { color: var(--muted); margin: 0 .1rem; }
 
 /* ---------- résultats ---------- */
 .results { display: flex; flex-direction: column; gap: .7rem; }

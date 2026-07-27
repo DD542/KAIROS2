@@ -187,10 +187,25 @@ $("files").addEventListener("click", async (e) => {
 
 let rtvcPath = "";
 
+// Fil d'Ariane : chaque niveau du chemin devient un lien cliquable, pour
+// remonter directement à n'importe quel dossier parent (plus fiable qu'un
+// simple « .. » et sans avoir à recharger la page).
+function renderBreadcrumb(path) {
+  const el = $("rtvc-path");
+  const parts = path.split("/").filter(Boolean);
+  let acc = "";
+  const links = [`<a href="#" data-dir="">Racine</a>`];
+  for (const p of parts) {
+    acc += "/" + p;
+    links.push(`<a href="#" data-dir="${esc(acc)}">${esc(p)}</a>`);
+  }
+  el.innerHTML = links.join(' <span class="crumb-sep">›</span> ');
+}
+
 async function loadRtvc(path) {
   rtvcPath = path;
   const list = $("rtvc-list");
-  $("rtvc-path").textContent = path || "/";
+  renderBreadcrumb(path);
   list.innerHTML = '<div class="loading">Chargement…</div>';
 
   let d;
@@ -208,9 +223,10 @@ async function loadRtvc(path) {
   }
 
   const rows = [];
-  if (d.parent !== null && d.parent !== undefined && path) {
+  if (path) {
+    const parent = d.parent ?? path.replace(/\/[^/]*$/, "");
     rows.push(`<div class="file-row">
-      <span class="fname">📁 <a href="#" data-dir="${esc(d.parent)}">.. (dossier parent)</a></span>
+      <span class="fname">↩ <a href="#" data-dir="${esc(parent)}">Dossier parent</a></span>
     </div>`);
   }
   for (const it of d.items || []) {
@@ -229,6 +245,14 @@ async function loadRtvc(path) {
     ? rows.join("")
     : '<div class="empty">Dossier vide (aucune vidéo ni sous-dossier).</div>';
 }
+
+// Clic sur le fil d'Ariane (dans l'en-tête) : remonte au niveau choisi.
+$("rtvc-path").addEventListener("click", (e) => {
+  const crumb = e.target.closest("a[data-dir]");
+  if (!crumb) return;
+  e.preventDefault();
+  loadRtvc(crumb.dataset.dir);
+});
 
 $("rtvc-list").addEventListener("click", async (e) => {
   const dir = e.target.closest("a[data-dir]");
