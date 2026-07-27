@@ -77,6 +77,12 @@ async function boot() {
   if (startAt > 0) seekTo(startAt);
 }
 
+// Le lien « Retour » ramène à la recherche telle qu'elle était.
+(function setBackLink() {
+  const last = sessionStorage.getItem("kairos:lastQuery");
+  if (last) $("back-link").href = `/?q=${encodeURIComponent(last)}`;
+})();
+
 // Copier un lien qui rouvre la vidéo à l'instant courant
 $("copy-link").addEventListener("click", async () => {
   const t = Math.floor(video.currentTime || 0);
@@ -95,8 +101,24 @@ $("copy-link").addEventListener("click", async () => {
 /* ---------------- sous-titre du passage en cours ---------------- */
 
 let segments = [];
+// Préférence mémorisée d'un média à l'autre et d'une visite à l'autre.
+let captionsOn = localStorage.getItem("kairos:captions") !== "off";
+
+function refreshCaptionButton() {
+  const b = $("toggle-captions");
+  b.textContent = captionsOn ? "💬 Sous-titres : activés" : "💬 Sous-titres : désactivés";
+  b.setAttribute("aria-pressed", String(captionsOn));
+  if (!captionsOn) $("caption").hidden = true;
+}
+
+$("toggle-captions").addEventListener("click", () => {
+  captionsOn = !captionsOn;
+  localStorage.setItem("kairos:captions", captionsOn ? "on" : "off");
+  refreshCaptionButton();
+});
 
 async function loadCaptions() {
+  refreshCaptionButton();
   try {
     segments = await (await fetch(`${API}/media/${mediaId}/segments`)).json();
   } catch {
@@ -105,6 +127,10 @@ async function loadCaptions() {
   if (!segments.length) return;
   const cap = $("caption");
   video.addEventListener("timeupdate", () => {
+    if (!captionsOn) {
+      cap.hidden = true;
+      return;
+    }
     const ms = video.currentTime * 1000;
     const seg = segments.find((s) => ms >= s.start_ms && ms < s.end_ms);
     if (seg) {

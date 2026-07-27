@@ -31,6 +31,7 @@ class ProcessedMedia(Base):
     status: Mapped[str] = mapped_column(Text, default="pending")  # pending|processing|ready|failed
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    language: Mapped[str | None] = mapped_column(Text, nullable=True)  # détectée
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

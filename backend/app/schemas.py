@@ -11,6 +11,7 @@ class MediaOut(BaseModel):
     has_playback: bool
     hls_ready: bool
     duration_ms: int | None
+    language: str | None
     error: str | None
     processed_at: datetime | None
 

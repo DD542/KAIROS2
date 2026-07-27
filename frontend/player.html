@@ -11,7 +11,7 @@
   <header class="site">
     <div class="wrap">
       <a class="brand" href="/"><b>Kairos</b><span>recherche sémantique vidéo</span></a>
-      <nav><a href="/">← Retour à la recherche</a></nav>
+      <nav><a href="/" id="back-link">← Retour aux résultats</a></nav>
     </div>
   </header>
 
@@ -25,6 +25,7 @@
         <h1 id="title" style="font-size:1.15rem;margin:.9rem 0 .2rem"></h1>
         <p id="subtitle" style="color:var(--muted);font-size:.9rem;margin:0"></p>
         <div class="actions" id="actions">
+          <button class="btn ghost" id="toggle-captions" type="button" aria-pressed="true">💬 Sous-titres : activés</button>
           <button class="btn ghost" id="copy-link" type="button">🔗 Copier le lien (au timestamp)</button>
           <a class="btn ghost" id="dl-srt" download>⬇ SRT</a>
           <a class="btn ghost" id="dl-vtt" download>⬇ VTT</a>

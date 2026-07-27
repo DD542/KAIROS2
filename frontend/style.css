@@ -150,6 +150,19 @@ section { margin-top: 2.6rem; }
 .sec-head .count a:hover { text-decoration: underline; }
 .crumb-sep { color: var(--muted); margin: 0 .1rem; }
 
+/* filtre segmenté des résultats (Tout / Parlé / À l'écran) */
+.seg-filter { display: flex; gap: .35rem; margin-left: auto; }
+.seg-filter .chip { cursor: pointer; }
+.seg-filter .chip.active {
+  background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+}
+/* badge de langue détectée */
+.lang {
+  font-family: var(--mono); font-size: .7rem; font-weight: 700;
+  padding: .1rem .35rem; border-radius: 4px;
+  background: var(--surface-2); color: var(--muted);
+}
+
 /* ---------- résultats ---------- */
 .results { display: flex; flex-direction: column; gap: .7rem; }
 .hit {

@@ -38,20 +38,26 @@ class Segment:
     text: str
 
 
-def transcribe(wav_path: Path) -> list[Segment]:
+def transcribe(wav_path: Path) -> tuple[list[Segment], str | None]:
     """Transcrit l'audio puis regroupe les segments en passages cohérents.
+
+    Renvoie ``(segments, langue_detectee)``. La langue est détectée
+    automatiquement (Whisper est multilingue) sauf si ``WHISPER_LANGUAGE`` la
+    force : une vidéo en anglais est donc correctement transcrite, et la
+    recherche reste cross-langue grâce aux embeddings multilingues.
 
     faster-whisper renvoie des segments courts (phrases) ; on les fusionne en
     passages d'environ ``transcript_max_segment_seconds`` (coupés sur les
     silences), plus parlants à la recherche qu'un fragment de trois mots.
     """
     model = _get_model()
-    raw_segments, _info = model.transcribe(
+    raw_segments, info = model.transcribe(
         str(wav_path),
-        language="fr",
+        language=settings.whisper_language or None,  # None = détection auto
         vad_filter=True,
         beam_size=1,  # rapide ; suffisant en CPU
     )
+    detected = getattr(info, "language", None)
 
     max_len = settings.transcript_max_segment_seconds
     max_gap = settings.transcript_gap_seconds
@@ -86,4 +92,4 @@ def transcribe(wav_path: Path) -> list[Segment]:
         prev_end = seg.end
 
     flush(prev_end)
-    return segments
+    return segments, detected

@@ -61,11 +61,16 @@ def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
     """
     if _count(db, Transcription, media_id) == 0:
         wav = transcode.extract_audio_wav(video, work / "audio.wav")
-        segments = transcribe.transcribe(wav)
+        segments, language = transcribe.transcribe(wav)
         db.add_all(
             Transcription(rtvc_id=media_id, start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
             for s in segments
         )
+        if language:
+            pm = db.get(ProcessedMedia, media_id)
+            if pm is not None:
+                pm.language = language
+            log.info("media=%s : langue détectée = %s", media_id, language)
         db.commit()
 
     if _count(db, OcrText, media_id) == 0:
@@ -328,14 +333,16 @@ def process_media(self, media_id: int, title: str | None = None) -> dict:
             pm.duration_ms = transcode.probe_duration_ms(src)
             db.commit()
 
-        # 3. audio -> Vosk (idempotent)
+        # 3. audio -> transcription Whisper (idempotent)
         if _count(db, Transcription, media_id) == 0:
             wav = transcode.extract_audio_wav(src, work / "audio.wav")
-            segments = transcribe.transcribe(wav)
+            segments, language = transcribe.transcribe(wav)
             db.add_all(
                 Transcription(rtvc_id=media_id, start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
                 for s in segments
             )
+            if language:
+                pm.language = language
             db.commit()
 
         # 4. keyframes -> Tesseract OCR (idempotent)

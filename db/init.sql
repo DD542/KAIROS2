@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS processed_media (
     status       TEXT NOT NULL DEFAULT 'pending',  -- pending|processing|ready|failed
     error        TEXT,
     duration_ms  BIGINT,
+    language     TEXT,                             -- langue détectée (auto)
     processed_at TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()

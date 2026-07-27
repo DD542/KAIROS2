@@ -32,7 +32,7 @@
           </svg>
         </span>
         <input id="q" type="search" autocomplete="off"
-               placeholder="Ex : comment calcule-t-on la transformée de Fourier ?"
+               placeholder="Posez votre question…  (appuyez sur / )"
                aria-label="Votre question" />
         <button type="submit" id="search-btn">Chercher</button>
       </form>
@@ -44,6 +44,11 @@
       <div class="sec-head">
         <h2>Résultats</h2>
         <span class="count" id="results-count"></span>
+        <div class="seg-filter" role="group" aria-label="Filtrer les résultats">
+          <button class="chip active" data-src="all" type="button">Tout</button>
+          <button class="chip" data-src="audio" type="button">Parlé</button>
+          <button class="chip" data-src="visual" type="button">À l'écran</button>
+        </div>
       </div>
       <div class="results" id="results"></div>
     </section>

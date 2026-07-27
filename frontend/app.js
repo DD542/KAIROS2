@@ -43,10 +43,18 @@ function highlight(text, query) {
   return safe.replace(re, "<mark>$1</mark>");
 }
 
-async function doSearch(query) {
+async function doSearch(query, pushUrl = true) {
   const box = $("results");
   const section = $("resultats");
   section.hidden = false;
+  // La requête vit dans l'URL : le bouton « retour » du navigateur ramène aux
+  // résultats après avoir consulté une vidéo, et le lien est partageable.
+  if (pushUrl) {
+    const u = new URL(location.href);
+    u.searchParams.set("q", query);
+    history.replaceState(null, "", u);
+    sessionStorage.setItem("kairos:lastQuery", query);
+  }
   $("results-count").textContent = "";
   box.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
   section.scrollIntoView({ block: "start" });
@@ -67,7 +75,29 @@ async function doSearch(query) {
     return;
   }
 
-  $("results-count").textContent = `${data.hits.length} moment${data.hits.length > 1 ? "s" : ""}`;
+  lastHits = data.hits;
+  lastQuery = query;
+  renderHits();
+}
+
+// Filtre par origine du résultat (parlé / à l'écran), sans relancer la requête.
+let lastHits = [];
+let lastQuery = "";
+let srcFilter = "all";
+
+function renderHits() {
+  const box = $("results");
+  const hits =
+    srcFilter === "all" ? lastHits : lastHits.filter((h) => h.source === srcFilter);
+
+  if (!hits.length) {
+    box.innerHTML = '<div class="empty">Aucun résultat pour ce filtre.</div>';
+    $("results-count").textContent = "0";
+    return;
+  }
+  $("results-count").textContent = `${hits.length} moment${hits.length > 1 ? "s" : ""}`;
+  const data = { hits };
+  const query = lastQuery;
   box.innerHTML = data.hits
     .map((h) => {
       const badge = h.source === "visual"
@@ -95,6 +125,27 @@ $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const q = $("q").value.trim();
   if (q) doSearch(q);
+});
+
+// Filtre parlé / à l'écran
+document.querySelector(".seg-filter").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-src]");
+  if (!b) return;
+  srcFilter = b.dataset.src;
+  document
+    .querySelectorAll(".seg-filter .chip")
+    .forEach((c) => c.classList.toggle("active", c === b));
+  renderHits();
+});
+
+// Raccourci « / » : place le curseur dans la recherche (sauf si on tape déjà).
+document.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "");
+  if (e.key === "/" && !typing) {
+    e.preventDefault();
+    $("q").focus();
+    $("q").select();
+  }
 });
 
 $("examples").innerHTML =
@@ -147,12 +198,15 @@ function renderMedia() {
         ? `<button class="btn ghost" data-retry="${m.rtvc_id}" type="button">Réessayer</button>`
         : "";
       const del = `<button class="btn ghost danger" data-del="${m.rtvc_id}" title="Supprimer" type="button">✕</button>`;
+      const lang = m.language
+        ? `<span class="lang" title="Langue détectée">${esc(m.language.toUpperCase())}</span>`
+        : "";
       const inner = `<h3>${title}</h3>
         <div class="media-meta">
           <span class="state ${m.status}">${m.status}</span>
           <span>${m.source}</span>
           <span>${dur}</span>
-          ${retry}${del}
+          ${lang}${retry}${del}
         </div>`;
       return m.status === "ready"
         ? `<a class="media-card" href="/video/${m.rtvc_id}">${inner}</a>`
@@ -409,3 +463,14 @@ loadMedia();
 loadFiles();
 loadRtvc("");
 setInterval(loadMedia, 4000);
+
+// Restaure la dernière recherche (retour depuis le lecteur, ou lien partagé).
+(function restoreSearch() {
+  const q =
+    new URLSearchParams(location.search).get("q") ||
+    sessionStorage.getItem("kairos:lastQuery");
+  if (q) {
+    $("q").value = q;
+    doSearch(q, false);
+  }
+})();

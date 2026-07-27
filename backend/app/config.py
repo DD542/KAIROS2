@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # ("base" plus rapide/moins précis, "medium" plus précis/plus lent).
     whisper_model: str = "small"
     whisper_compute_type: str = "int8"  # quantifié pour la vitesse CPU
+    # Langue de transcription : vide = détection automatique (recommandé,
+    # gère les vidéos en anglais, espagnol…). Mettre "fr" pour forcer.
+    whisper_language: str = ""
     # Modèle MULTILINGUE : indispensable pour du contenu français. Même
     # dimension (384) que all-MiniLM-L6-v2, donc schéma pgvector inchangé.
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
