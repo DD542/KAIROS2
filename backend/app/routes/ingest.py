@@ -32,7 +32,7 @@ class NasIngestRequest(BaseModel):
     nas_path: str
     title: str | None = None
     max_seconds: int | None = 180
-    max_mb: int | None = 120
+    max_mb: int | None = None
 
 
 class LocalIngestRequest(BaseModel):
@@ -103,7 +103,7 @@ def _reserve_media(db: Session, path: str, title: str, source: str) -> int:
 class IndexAllRequest(BaseModel):
     path: str = ""
     max_seconds: int | None = 180
-    max_mb: int | None = 120
+    max_mb: int | None = None
 
 
 @router.post("/ingest/rtvc/index-all")

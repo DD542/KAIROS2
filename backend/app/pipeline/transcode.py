@@ -15,7 +15,13 @@ from app.config import settings
 
 
 def _run(cmd: list[str]) -> None:
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    """Exécute une commande et, en cas d'échec, remonte la fin de la sortie
+    d'erreur (indispensable pour diagnostiquer FFmpeg)."""
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip().splitlines()
+        tail = " | ".join(err[-3:]) if err else f"code {proc.returncode}"
+        raise RuntimeError(f"ffmpeg a échoué ({cmd[0]}): {tail}")
 
 
 def probe_duration_ms(src: Path) -> int:
@@ -49,7 +55,9 @@ def make_playback_mp4(src: Path, out_path: Path, max_seconds: int | None = None)
     to serve the video itself instead of delegating to RTVC.
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["ffmpeg", "-y"]
+    # -err_detect ignore_err + discardcorrupt : tolère un fichier légèrement
+    # abîmé (ex. téléchargement écourté) au lieu d'abandonner.
+    cmd = ["ffmpeg", "-y", "-err_detect", "ignore_err", "-fflags", "+discardcorrupt"]
     if max_seconds:
         cmd += ["-t", str(max_seconds)]
     cmd += [

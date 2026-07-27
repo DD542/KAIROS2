@@ -138,7 +138,7 @@ LOCAL_ID_BASE = 900000  # identifiants internes des médias hors bibliothèque R
 
 @celery_app.task(bind=True, name="kairos.index_all_rtvc")
 def index_all_rtvc(self, root: str = "", max_seconds: int | None = 180,
-                   max_mb: int | None = 120) -> dict:
+                   max_mb: int | None = None) -> dict:
     """Scanne récursivement un dossier NAS et met en file l'indexation de
     chaque vidéo pas encore indexée. Une seule tâche « chef » qui délègue une
     tâche par vidéo — la recherche couvrira ensuite tout le dossier."""
@@ -176,7 +176,7 @@ def index_all_rtvc(self, root: str = "", max_seconds: int | None = 180,
 @celery_app.task(bind=True, name="kairos.process_rtvc_nas", **_RETRY)
 def process_rtvc_nas(self, media_id: int, nas_path: str, title: str,
                      max_seconds: int | None = 180,
-                     max_mb: int | None = 120) -> dict:
+                     max_mb: int | None = None) -> dict:
     """Indexe une vidéo stockée sur le NAS RTVC, via son chemin de fichier.
 
     C'est la voie qui fonctionne réellement : /nas/download livre les octets
