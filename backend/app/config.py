@@ -53,6 +53,22 @@ class Settings(BaseSettings):
     # rapatrie le fichier entier automatiquement.
     download_probe_mb: int = 300
 
+    # ---- Indexation automatique (mode « bibliothèque déjà remplie ») --------
+    # Quand Kairos est installé sur un système qui possède DÉJÀ les vidéos, on
+    # ne veut pas cliquer « Indexer » une par une : un balayage périodique met
+    # en file tout ce qui n'est pas encore indexé. L'indexation manuelle reste
+    # disponible (bouton par vidéo) — les deux voies partagent le même coeur.
+    autosync_enabled: bool = False
+    autosync_interval_minutes: int = 15
+    # Balaye le dossier local monté (MEDIA_INPUT_DIR).
+    autosync_local: bool = True
+    # Balaye le NAS RTVC à partir de ce dossier. Vide = pas de balayage RTVC
+    # (le scan RTVC est coûteux : ne l'activer qu'avec une racine précise).
+    autosync_rtvc_root: str = ""
+    # Plafond de mises en file par passage : évite de saturer la file au 1er
+    # démarrage sur une bibliothèque de milliers de vidéos.
+    autosync_batch: int = 20
+
     keyframe_interval_seconds: int = 3
     transcript_max_segment_seconds: float = 8.0
     transcript_gap_seconds: float = 0.8

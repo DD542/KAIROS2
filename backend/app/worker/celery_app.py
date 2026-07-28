@@ -18,6 +18,17 @@ celery_app.conf.update(
     worker_max_tasks_per_child=20,  # release RAM (torch/vosk) periodically
 )
 
+# Indexation automatique : le worker démarré avec -B (beat embarqué) déclenche
+# le balayage. Le calendrier n'est publié que si la fonction est activée, pour
+# qu'une installation classique ne paie aucun réveil périodique.
+if settings.autosync_enabled:
+    celery_app.conf.beat_schedule = {
+        "kairos-autosync": {
+            "task": "kairos.autosync",
+            "schedule": max(settings.autosync_interval_minutes, 1) * 60.0,
+        }
+    }
+
 
 @worker_process_init.connect
 def _preload_models(**_kwargs) -> None:

@@ -124,6 +124,36 @@ header.site nav a:hover { color: var(--ink); background: var(--surface-2); }
 .searchbar button:hover { filter: brightness(1.08); }
 .searchbar button:disabled { opacity: .55; cursor: default; }
 
+/* ---------- suggestions pendant la frappe ---------- */
+/* La barre de recherche est le repère de la liste : celle-ci se pose juste
+   dessous, alignée sur sa largeur, sans décaler le reste de la page. */
+.searchbar { position: relative; }
+.suggest {
+  position: absolute; z-index: 30;
+  top: calc(100% + .4rem); left: 0; right: 0;
+  margin: 0; padding: .3rem; list-style: none;
+  background: var(--surface); border: 1.5px solid var(--line);
+  border-radius: 1rem; box-shadow: var(--shadow);
+  max-height: 19rem; overflow-y: auto;
+  text-align: left;
+}
+.suggest li {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .5rem .75rem; border-radius: .65rem;
+  cursor: pointer; font-size: .93rem; color: var(--ink);
+}
+.suggest li:hover, .suggest li.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.suggest .sg-text {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.suggest .sg-kind {
+  flex: none; font-size: .72rem; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: .1rem .5rem;
+}
+
 .examples {
   display: flex; flex-wrap: wrap; gap: .45rem; justify-content: center;
   margin: 1rem auto 0; max-width: 44rem;

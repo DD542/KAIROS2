@@ -1,0 +1,127 @@
+# Fly.io deployment config for Kairos
+# ⚠️ IMPORTANT: This file is for Fly.io ONLY. It does NOT affect:
+#   - Local dev (docker-compose up)
+#   - GCP (docker-compose -f docker-compose.prod.yml up)
+#   - Docker Compose deployments on any other platform
+#
+# To deploy on Fly.io: flyctl deploy
+# To deploy elsewhere: use docker-compose.yml or docker-compose.prod.yml
+
+app = "kairos"
+primary_region = "cdg"  # Paris, France
+
+[build]
+dockerfile = "Dockerfile"
+# Build context is the entire repo root
+# The Dockerfile copies from backend/ automatically
+
+[env]
+# Fly.io managed Postgres and Redis connections are injected via fly secrets
+# Add these via: flyctl secrets set POSTGRES_PASSWORD=... etc
+POSTGRES_USER = "kairos"
+POSTGRES_DB = "kairos"
+DATA_DIR = "/data"
+FRONTEND_DIR = "/frontend"
+MEDIA_INPUT_DIR = "/media_in"
+RTVC_BASE_URL = "https://api.rtvc-media.com"
+RTVC_VERIFY_SSL = "true"
+HLS_POLL_INTERVAL = "5"
+HLS_POLL_TIMEOUT = "900"
+KAIROS_PASSWORD = "KairosDemo2026"
+
+[processes]
+# Fly.io single-process model: only the API server runs
+# For Celery workers, see notes below
+web = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+[http_service]
+internal_port = 8000
+force_https = true
+auto_stop_machines = true
+auto_start_machines = true
+min_machines_running = 1
+
+[[http_service.checks]]
+grace_period = "30s"
+interval = "30s"
+timeout = "5s"
+method = "GET"
+path = "/health"
+
+[[services]]
+protocol = "http"
+internal_port = 8000
+processes = ["web"]
+
+  [[services.ports]]
+  number = 80
+  handlers = ["http"]
+  force_https = true
+
+  [[services.ports]]
+  number = 443
+  handlers = ["tls", "http"]
+
+[mounts]
+# Persistent storage for media files
+source = "media_storage"
+destination = "/data"
+
+# Input media staging (read-only in prod)
+# source = "media_input"
+# destination = "/media_in"
+
+[[mounts]]
+source = "media_storage"
+destination = "/data"
+
+# NOTES ON KAIROS ARCHITECTURE FOR FLY.IO:
+#
+# 1. DATABASE: Use Fly Postgres (managed)
+#    flyctl postgres create --name kairos-db --region cdg --vm-size shared-cpu-1x
+#    flyctl postgres attach kairos-db --app kairos
+#    Fly.io will inject DATABASE_URL automatically
+#
+# 2. REDIS: Use Fly Redis (managed)
+#    flyctl redis create --name kairos-redis --region cdg --plan paying-shared-1x
+#    flyctl redis attach kairos-redis --app kairos
+#    Fly.io will inject REDIS_URL automatically, convert to CELERY_BROKER_URL
+#
+# 3. CELERY WORKERS: NOT INCLUDED in this fly.toml
+#    Fly.io single-process model doesn't run background tasks.
+#    Options:
+#    a) Deploy workers separately on another service (second Fly app)
+#    b) Use Fly.io scheduled tasks + webhook to trigger processing
+#    c) Accept that only API runs; users upload, processing happens in background
+#       (requires external job queue)
+#    For MVP: option (a) is simplest — deploy "kairos-worker" as separate Fly app
+#    using same Dockerfile but different entrypoint:
+#    CMD = celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
+#
+# 4. ENVIRONMENT VARIABLES:
+#    Secrets (never in this file):
+#    flyctl secrets set POSTGRES_PASSWORD=<strong-password>
+#    flyctl secrets set RTVC_USERNAME=Rtvc2026
+#    flyctl secrets set RTVC_PASSWORD=<actual-password>
+#    flyctl secrets set WEBHOOK_SECRET=<random-string>
+#
+# 5. VOLUME STRATEGY:
+#    - media_storage: shared across all instances, persists uploads/transcodes
+#    - media_input: optional, for initial seed data (keep read-only in prod)
+#
+# 6. MACHINE SIZING:
+#    shared-cpu-1x: 1 shared CPU, 256 MB RAM (free tier, ~$0/mo if under limits)
+#    shared-cpu-2x: 2 shared CPU, 512 MB RAM (~$2/mo)
+#    performance-1x: 1 full CPU, 2 GB RAM (~$12/mo)
+#    For Kairos with Whisper (CPU-intensive): recommend performance-1x min
+#
+# 7. COSTS:
+#    Free: 3 shared-cpu-1x machines (1 always on, 2 can stop)
+#    Prod: ~$12-24/mo for shared-cpu-2x or performance-1x + Postgres + Redis
+#
+# 8. DIFFERENCES FROM DOCKER-COMPOSE & GCP:
+#    - NO hot reload (--reload removed)
+#    - NO bind-mounts (volumes are persistent storage, not code)
+#    - Database/Redis are managed services (auto-provisioned)
+#    - Single process (no docker-compose orchestration)
+#    - Health checks via HTTP /health (not container status)

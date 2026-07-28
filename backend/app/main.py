@@ -132,6 +132,15 @@ def _warm_embeddings() -> None:
 def _init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # unaccent rend les suggestions insensibles aux accents (« grace » trouve
+    # « grâce »). Optionnelle : sur une base où l'utilisateur n'a pas le droit
+    # de créer une extension, la recherche reste littérale plutôt que de
+    # bloquer le démarrage.
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+    except Exception:  # noqa: BLE001
+        pass
     Base.metadata.create_all(bind=engine)
 
 

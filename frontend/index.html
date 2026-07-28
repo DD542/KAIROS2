@@ -33,8 +33,11 @@
         </span>
         <input id="q" type="search" autocomplete="off"
                placeholder="Posez votre question…  (appuyez sur / )"
-               aria-label="Votre question" />
+               aria-label="Votre question"
+               role="combobox" aria-expanded="false" aria-autocomplete="list"
+               aria-controls="suggest" />
         <button type="submit" id="search-btn">Chercher</button>
+        <ul class="suggest" id="suggest" role="listbox" hidden></ul>
       </form>
 
       <div class="examples" id="examples"></div>
@@ -76,8 +79,8 @@
         </p>
         <div class="field">
           <label for="rtvc-seconds">Durée à traiter</label>
-          <input id="rtvc-seconds" type="number" min="0" step="10" value="180" />
-          <label>s <small>(0 = entière)</small></label>
+          <input id="rtvc-seconds" type="number" min="0" step="10" value="0" />
+          <label>s <small>(0 = vidéo entière — par défaut)</small></label>
           <label for="rtvc-mb" style="margin-left:.6rem">Télécharger au plus</label>
           <input id="rtvc-mb" type="number" min="0" step="10" value="0" />
           <label>Mo <small>(0 = illimité, recommandé — évite les fichiers tronqués)</small></label>
@@ -99,12 +102,12 @@
       <div class="panel">
         <p class="hint">
           Choisissez une vidéo du dossier surveillé sur cet ordinateur : Kairos la
-          transcrit (Vosk), lit le texte à l'écran (OCR) et l'indexe.
+          transcrit (Whisper), lit le texte à l'écran (OCR) et l'indexe.
         </p>
         <div class="field">
           <label for="max-seconds">Durée à traiter</label>
-          <input id="max-seconds" type="number" min="10" step="10" value="180" />
-          <label>secondes <small>(0 = vidéo entière ; limiter accélère la démo)</small></label>
+          <input id="max-seconds" type="number" min="0" step="10" value="0" />
+          <label>secondes <small>(0 = vidéo entière — par défaut ; limiter n'accélère qu'une démo)</small></label>
         </div>
         <div class="file-list" id="files">
           <div class="loading">Lecture du dossier…</div>

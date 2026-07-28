@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -28,17 +28,36 @@ LOCAL_ID_BASE = 900000
 VIDEO_EXT = {".mp4", ".ts", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpg", ".mpeg"}
 
 
+# 0 et None veulent tous deux dire « pas de limite ». Sans cette normalisation,
+# un 0 envoyé par l'interface retombait sur la valeur par défaut du champ et la
+# vidéo était tronquée alors que l'utilisateur demandait l'inverse.
+def _no_limit(v: int | None) -> int | None:
+    return None if not v or v <= 0 else v
+
+
 class NasIngestRequest(BaseModel):
     nas_path: str
     title: str | None = None
-    max_seconds: int | None = 180
+    # Par défaut : vidéo ENTIÈRE. Une limite ne sert qu'à accélérer une démo ;
+    # la subir par défaut donnait une lecture qui s'arrête au bout de 3 min.
+    max_seconds: int | None = None
     max_mb: int | None = None
+
+    @field_validator("max_seconds", "max_mb")
+    @classmethod
+    def _zero_means_unlimited(cls, v: int | None) -> int | None:
+        return _no_limit(v)
 
 
 class LocalIngestRequest(BaseModel):
     path: str
     title: str | None = None
-    max_seconds: int | None = 300  # limite la durée traitée (démo rapide)
+    max_seconds: int | None = None  # None/0 = vidéo entière
+
+    @field_validator("max_seconds")
+    @classmethod
+    def _zero_means_unlimited(cls, v: int | None) -> int | None:
+        return _no_limit(v)
 
 
 def _input_root() -> Path:
@@ -102,8 +121,13 @@ def _reserve_media(db: Session, path: str, title: str, source: str) -> int:
 
 class IndexAllRequest(BaseModel):
     path: str = ""
-    max_seconds: int | None = 180
+    max_seconds: int | None = None
     max_mb: int | None = None
+
+    @field_validator("max_seconds", "max_mb")
+    @classmethod
+    def _zero_means_unlimited(cls, v: int | None) -> int | None:
+        return _no_limit(v)
 
 
 @router.post("/ingest/rtvc/index-all")

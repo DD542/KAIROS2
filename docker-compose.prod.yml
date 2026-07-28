@@ -91,11 +91,20 @@ services:
       RTVC_USERNAME: ${RTVC_USERNAME}
       RTVC_PASSWORD: ${RTVC_PASSWORD}
       RTVC_OTP_CODE: ${RTVC_OTP_CODE:-}
+      MEDIA_INPUT_DIR: /media_in
+      # Indexation automatique : rattrape une bibliothèque déjà remplie puis
+      # suit les ajouts, sans clic. Désactivée par défaut.
+      AUTOSYNC_ENABLED: ${AUTOSYNC_ENABLED:-false}
+      AUTOSYNC_INTERVAL_MINUTES: ${AUTOSYNC_INTERVAL_MINUTES:-15}
+      AUTOSYNC_LOCAL: ${AUTOSYNC_LOCAL:-true}
+      AUTOSYNC_RTVC_ROOT: ${AUTOSYNC_RTVC_ROOT:-}
+      AUTOSYNC_BATCH: ${AUTOSYNC_BATCH:-20}
     volumes:
       - media:/data
       - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
     # concurrency modéré : la transcription est gourmande en CPU/RAM
-    command: celery -A app.worker.celery_app worker --loglevel=warning --concurrency=${WORKER_CONCURRENCY:-1}
+    # -B : planificateur embarqué requis par l'indexation automatique.
+    command: celery -A app.worker.celery_app worker --loglevel=warning --concurrency=${WORKER_CONCURRENCY:-1} -B
 
 volumes:
   pgdata:

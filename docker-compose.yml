@@ -82,13 +82,20 @@ services:
       RTVC_VERIFY_SSL: ${RTVC_VERIFY_SSL:-true}
       HLS_POLL_INTERVAL: ${HLS_POLL_INTERVAL:-5}
       HLS_POLL_TIMEOUT: ${HLS_POLL_TIMEOUT:-900}
+      AUTOSYNC_ENABLED: ${AUTOSYNC_ENABLED:-false}
+      AUTOSYNC_INTERVAL_MINUTES: ${AUTOSYNC_INTERVAL_MINUTES:-15}
+      AUTOSYNC_LOCAL: ${AUTOSYNC_LOCAL:-true}
+      AUTOSYNC_RTVC_ROOT: ${AUTOSYNC_RTVC_ROOT:-}
+      AUTOSYNC_BATCH: ${AUTOSYNC_BATCH:-20}
     volumes:
       - ./backend:/app
       - media:/data
       - ${MEDIA_INPUT_DIR:-./media_in}:/media_in:ro
     # concurrency=1 : Whisper (CTranslate2) est déjà multi-thread ; deux
     # transcriptions en parallèle sursollicitent le CPU et ralentissent tout.
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
+    # -B : planificateur embarqué, nécessaire à l'indexation automatique
+    # (AUTOSYNC_ENABLED). Sans calendrier publié, il ne coûte rien.
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 -B
 
 volumes:
   pgdata:

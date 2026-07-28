@@ -149,7 +149,7 @@ LOCAL_ID_BASE = 900000  # identifiants internes des médias hors bibliothèque R
 
 
 @celery_app.task(bind=True, name="kairos.index_all_rtvc")
-def index_all_rtvc(self, root: str = "", max_seconds: int | None = 180,
+def index_all_rtvc(self, root: str = "", max_seconds: int | None = None,
                    max_mb: int | None = None) -> dict:
     """Scanne récursivement un dossier NAS et met en file l'indexation de
     chaque vidéo pas encore indexée. Une seule tâche « chef » qui délègue une
@@ -185,15 +185,104 @@ def index_all_rtvc(self, root: str = "", max_seconds: int | None = 180,
         db.close()
 
 
+VIDEO_EXT = {".mp4", ".ts", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpg", ".mpeg"}
+
+
+def _next_local_id(db) -> int:
+    return (db.scalar(
+        select(func.max(ProcessedMedia.rtvc_id)).where(
+            ProcessedMedia.rtvc_id >= LOCAL_ID_BASE
+        )
+    ) or LOCAL_ID_BASE) + 1
+
+
+@celery_app.task(bind=True, name="kairos.autosync")
+def autosync(self) -> dict:
+    """Balaye les sources configurées et met en file ce qui n'est pas indexé.
+
+    Pensé pour une installation posée sur un système qui possède DÉJÀ sa
+    bibliothèque : plus rien à déclencher à la main, Kairos rattrape le stock
+    puis suit les ajouts. Idempotent — un média déjà connu (même ``local_path``)
+    est ignoré, donc le passage périodique ne refait jamais le même travail.
+    L'indexation manuelle reste disponible et utilise les mêmes tâches.
+    """
+    if not settings.autosync_enabled:
+        return {"actif": False}
+
+    db = SessionLocal()
+    queued: list[str] = []
+    try:
+        known = {p for (p,) in db.execute(select(ProcessedMedia.local_path)).all() if p}
+        budget = settings.autosync_batch
+
+        # --- source 1 : dossier local monté -------------------------------
+        if settings.autosync_local and budget > 0:
+            root = Path(settings.media_input_dir)
+            if root.is_dir():
+                for f in sorted(root.rglob("*")):
+                    if budget <= 0:
+                        break
+                    if not f.is_file() or f.suffix.lower() not in VIDEO_EXT:
+                        continue
+                    path = str(f)
+                    if path in known:
+                        continue
+                    media_id = _next_local_id(db)
+                    db.add(ProcessedMedia(rtvc_id=media_id, title=f.stem,
+                                          source="local", local_path=path,
+                                          status="pending"))
+                    db.commit()
+                    process_local.delay(media_id, path, f.stem, None)
+                    known.add(path)
+                    queued.append(path)
+                    budget -= 1
+
+        # --- source 2 : NAS RTVC (seulement si une racine est configurée) ---
+        if settings.autosync_rtvc_root and budget > 0:
+            from pathlib import PurePosixPath
+            try:
+                paths = get_rtvc().list_videos_recursive(settings.autosync_rtvc_root)
+            except Exception as exc:  # noqa: BLE001 - RTVC HS : on réessaiera
+                log.warning("autosync : NAS RTVC injoignable (%s)", exc)
+                paths = []
+            for path in paths:
+                if budget <= 0:
+                    break
+                if path in known:
+                    continue
+                media_id = _next_local_id(db)
+                title = PurePosixPath(path).stem
+                db.add(ProcessedMedia(rtvc_id=media_id, title=title,
+                                      source="rtvc-nas", local_path=path,
+                                      status="pending"))
+                db.commit()
+                process_rtvc_nas.delay(media_id, path, title, None, None)
+                known.add(path)
+                queued.append(path)
+                budget -= 1
+
+        if queued:
+            log.info("autosync : %s nouveau(x) média(s) mis en file", len(queued))
+        return {"actif": True, "mises_en_file": len(queued), "chemins": queued[:10]}
+    finally:
+        db.close()
+
+
 @celery_app.task(bind=True, name="kairos.process_rtvc_nas", **_RETRY)
 def process_rtvc_nas(self, media_id: int, nas_path: str, title: str,
-                     max_seconds: int | None = 180,
+                     max_seconds: int | None = None,
                      max_mb: int | None = None) -> dict:
     """Indexe une vidéo stockée sur le NAS RTVC, via son chemin de fichier.
 
     C'est la voie qui fonctionne réellement : /nas/download livre les octets
     là où signed-url et /documents/{id}/stream échouent.
     """
+    # 0 = « pas de limite » (même convention que l'interface). Sans ça, un 0
+    # transmis tel quel retombait sur le plafond de sondage et la vidéo servie
+    # au lecteur était tronquée.
+    max_seconds = max_seconds or None
+    max_mb = max_mb or None
+
     db = SessionLocal()
     try:
         pm = db.get(ProcessedMedia, media_id)

@@ -28,6 +28,14 @@ function esc(str) {
   return d.innerHTML;
 }
 
+// Lit un champ numérique en préservant le 0 (= « pas de limite »). `parseInt(..)
+// || défaut` trahissait l'utilisateur : saisir 0 relançait la valeur par défaut
+// et la vidéo était tronquée alors qu'il demandait l'inverse.
+function numField(id, fallback = 0) {
+  const v = parseInt($(id).value, 10);
+  return Number.isNaN(v) ? fallback : Math.max(v, 0);
+}
+
 /* ---------------- recherche ---------------- */
 
 // Surligne, dans un texte déjà échappé, les mots de la requête (>2 lettres).
@@ -54,6 +62,7 @@ async function doSearch(query, pushUrl = true) {
     u.searchParams.set("q", query);
     history.replaceState(null, "", u);
     sessionStorage.setItem("kairos:lastQuery", query);
+    remember(query);
   }
   $("results-count").textContent = "";
   box.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
@@ -124,8 +133,139 @@ function renderHits() {
 $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const q = $("q").value.trim();
-  if (q) doSearch(q);
+  if (q) {
+    closeSuggest();
+    doSearch(q);
+  }
 });
+
+/* ---------------- suggestions pendant la frappe ---------------- */
+
+// Les propositions viennent du contenu RÉELLEMENT indexé : l'utilisateur voit
+// ce qu'il peut trouver au lieu de deviner la bonne formulation. On y ajoute
+// ses recherches passées, qui sont souvent celles qu'il veut rejouer.
+const HISTORY_KEY = "kairos:history";
+const HISTORY_MAX = 8;
+
+function recentQueries() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function remember(query) {
+  const q = query.trim();
+  if (!q) return;
+  const list = [q, ...recentQueries().filter((h) => h !== q)].slice(0, HISTORY_MAX);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+}
+
+let suggestItems = [];
+let suggestIndex = -1;
+let suggestTimer = null;
+let suggestSeq = 0;
+
+function closeSuggest() {
+  $("suggest").hidden = true;
+  $("q").setAttribute("aria-expanded", "false");
+  suggestItems = [];
+  suggestIndex = -1;
+}
+
+const KIND_LABEL = { titre: "vidéo", audio: "parlé", visual: "à l'écran", recent: "récent" };
+
+function renderSuggest() {
+  const box = $("suggest");
+  if (!suggestItems.length) return closeSuggest();
+  box.innerHTML = suggestItems
+    .map(
+      (s, i) => `<li role="option" id="sg-${i}" data-i="${i}"
+        class="${i === suggestIndex ? "active" : ""}" aria-selected="${i === suggestIndex}">
+        <span class="sg-text">${esc(s.text)}</span>
+        <span class="sg-kind">${esc(KIND_LABEL[s.kind] || s.kind)}</span>
+      </li>`
+    )
+    .join("");
+  box.hidden = false;
+  $("q").setAttribute("aria-expanded", "true");
+  $("q").setAttribute(
+    "aria-activedescendant",
+    suggestIndex >= 0 ? `sg-${suggestIndex}` : ""
+  );
+}
+
+async function fetchSuggest(q) {
+  const recents = recentQueries()
+    .filter((h) => h.toLowerCase().includes(q.toLowerCase()) && h !== q)
+    .slice(0, 3)
+    .map((h) => ({ text: h, kind: "recent" }));
+
+  // Un identifiant de séquence évite qu'une réponse lente écrase l'affichage
+  // d'une frappe plus récente.
+  const seq = ++suggestSeq;
+  let remote = [];
+  try {
+    const res = await fetch(`${API}/suggest?q=${encodeURIComponent(q)}&limit=8`);
+    if (res.ok) remote = (await res.json()).suggestions || [];
+  } catch {
+    /* hors ligne : on garde au moins l'historique */
+  }
+  if (seq !== suggestSeq) return;
+
+  const seen = new Set(recents.map((r) => r.text.toLowerCase()));
+  suggestItems = [
+    ...recents,
+    ...remote.filter((r) => !seen.has((r.text || "").toLowerCase())),
+  ].slice(0, 8);
+  suggestIndex = -1;
+  renderSuggest();
+}
+
+$("q").addEventListener("input", () => {
+  const q = $("q").value.trim();
+  clearTimeout(suggestTimer);
+  if (q.length < 2) return closeSuggest();
+  // 180 ms : assez court pour paraître instantané, assez long pour ne pas
+  // lancer une requête à chaque touche.
+  suggestTimer = setTimeout(() => fetchSuggest(q), 180);
+});
+
+$("q").addEventListener("keydown", (e) => {
+  if ($("suggest").hidden) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    suggestIndex = (suggestIndex + step + suggestItems.length + 1) % (suggestItems.length + 1);
+    if (suggestIndex === suggestItems.length) suggestIndex = -1;
+    renderSuggest();
+  } else if (e.key === "Enter" && suggestIndex >= 0) {
+    e.preventDefault();
+    pickSuggest(suggestIndex);
+  } else if (e.key === "Escape") {
+    closeSuggest();
+  }
+});
+
+function pickSuggest(i) {
+  const s = suggestItems[i];
+  if (!s) return;
+  $("q").value = s.text;
+  closeSuggest();
+  remember(s.text);
+  doSearch(s.text);
+}
+
+$("suggest").addEventListener("mousedown", (e) => {
+  // mousedown (et non click) : le blur du champ fermerait la liste avant le clic
+  const li = e.target.closest("li[data-i]");
+  if (!li) return;
+  e.preventDefault();
+  pickSuggest(parseInt(li.dataset.i, 10));
+});
+
+$("q").addEventListener("blur", () => setTimeout(closeSuggest, 120));
 
 // Filtre parlé / à l'écran
 document.querySelector(".seg-filter").addEventListener("click", (e) => {
@@ -296,7 +436,7 @@ $("files").addEventListener("click", async (e) => {
       body: JSON.stringify({
         path: btn.dataset.path,
         title: btn.dataset.name.replace(/\.[^.]+$/, ""),
-        max_seconds: parseInt($("max-seconds").value, 10) || null,
+        max_seconds: numField("max-seconds"),
       }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -391,8 +531,6 @@ async function loadRtvc(path) {
 $("index-all").addEventListener("click", async () => {
   const toast = $("rtvc-toast");
   const btn = $("index-all");
-  const secs = parseInt($("rtvc-seconds").value, 10);
-  const mb = parseInt($("rtvc-mb").value, 10);
   const where = rtvcPath || "/ (racine)";
   if (!confirm(
     `Indexer TOUTES les vidéos de « ${where} » et ses sous-dossiers ?\n\n` +
@@ -408,8 +546,8 @@ $("index-all").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         path: rtvcPath,
-        max_seconds: isNaN(secs) ? 180 : secs,
-        max_mb: isNaN(mb) ? 120 : mb,
+        max_seconds: numField("rtvc-seconds"),
+        max_mb: numField("rtvc-mb"),
       }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -452,8 +590,8 @@ $("rtvc-list").addEventListener("click", async (e) => {
       body: JSON.stringify({
         nas_path: btn.dataset.nas,
         title: btn.dataset.name.replace(/\.[^.]+$/, ""),
-        max_seconds: parseInt($("rtvc-seconds").value, 10) || 180,
-        max_mb: parseInt($("rtvc-mb").value, 10) || 120,
+        max_seconds: numField("rtvc-seconds"),
+        max_mb: numField("rtvc-mb"),
       }),
     });
     const data = await res.json();
