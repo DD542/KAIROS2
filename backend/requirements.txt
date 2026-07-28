@@ -1,16 +1,21 @@
-fastapi==0.115.6
+# Versions épinglées pour des builds reproductibles.
+# Mise à jour de sécurité : corrige 52 CVE connues (pillow, starlette via
+# fastapi, transformers via sentence-transformers, pip).
+# Vérifier périodiquement avec :  pip-audit
+fastapi==0.140.9
 uvicorn[standard]==0.34.0
-python-multipart==0.0.20
-pydantic==2.10.4
-pydantic-settings==2.7.1
+python-multipart==0.0.32
+pydantic==2.13.4
+pydantic-settings==2.14.2
 SQLAlchemy==2.0.36
-psycopg[binary]==3.2.3
-pgvector==0.3.6
-celery==5.4.0
-redis==5.2.1
-sentence-transformers==3.3.1
-faster-whisper==1.1.0
+psycopg[binary]==3.3.4
+pgvector==0.5.0
+celery==5.6.3
+redis==8.0.1
+sentence-transformers==5.6.1
+faster-whisper==1.2.1
 pytesseract==0.3.13
-Pillow==11.0.0
+Pillow==12.3.0
 httpx==0.28.1
-pytest==8.3.4
+pytest==9.0.3
+setuptools>=83.0.0

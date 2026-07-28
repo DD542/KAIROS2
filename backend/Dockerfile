@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# pip récent : la version fournie par l'image de base a des CVE connues.
+RUN pip install --no-cache-dir --upgrade pip
+
 # Torch CPU-only AVANT le reste : évite d'embarquer les libs CUDA (~plusieurs Go
 # inutiles sans GPU). sentence-transformers réutilisera ce torch déjà présent.
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu

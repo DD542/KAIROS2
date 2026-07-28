@@ -340,11 +340,23 @@ async function loadRtvc(path) {
   let d;
   try {
     const res = await fetch(`${API}/ingest/rtvc/browse?path=${encodeURIComponent(path)}`);
+    // Un proxy (Cloudflare…) peut renvoyer une page d'erreur HTML si la requête
+    // traîne : on le détecte pour afficher un message clair plutôt qu'une
+    // erreur d'analyse JSON incompréhensible.
+    const type = res.headers.get("content-type") || "";
+    if (!type.includes("application/json")) {
+      throw new Error(
+        res.status === 200
+          ? "réponse inattendue du serveur (délai dépassé côté réseau)"
+          : `serveur indisponible (code ${res.status})`
+      );
+    }
     d = await res.json();
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
   } catch (e) {
     list.innerHTML = `<div class="empty"><b>NAS RTVC momentanément injoignable</b>
-      <span>${esc(String(e.message).slice(0, 140))}</span><br>
+      <span>Le serveur RTVC ne répond pas pour l'instant — ${esc(String(e.message).slice(0, 110))}.</span><br>
+      <span class="muted" style="font-size:.86rem">Les vidéos déjà indexées restent consultables et cherchables.</span><br>
       <button class="btn ghost" id="rtvc-retry" style="margin-top:.7rem" type="button">Réessayer</button>
     </div>`;
     document.getElementById("rtvc-retry")?.addEventListener("click", () => loadRtvc(rtvcPath));

@@ -138,6 +138,22 @@ Guide pas-à-pas pour le **NAS Synology (DS923+)** : [docs/DEPLOY-SYNOLOGY.md](d
 Guide **hébergement gratuit permanent (Oracle Cloud ARM, testeur à distance)** :
 [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md).
 
+### Maintenance : audit de sécurité
+
+Les vulnérabilités sont publiées en continu : un paquet sain au moment du build
+peut devenir vulnérable plus tard. **À relancer avant chaque mise en production
+(ou une fois par mois) :**
+
+```bash
+bash scripts/audit-securite.sh     # liste les CVE + paquets en retard
+```
+Si des vulnérabilités apparaissent : monter la version dans
+`backend/requirements.txt`, `docker compose build backend worker`, puis
+vérifier que tout fonctionne :
+```bash
+bash scripts/verifier.sh http://localhost:5000 utilisateur:motdepasse
+```
+
 ### Sécurité (production)
 
 - **CORS fermé par défaut** : aucune origine tierce autorisée. N'ouvrir via

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     rtvc_otp_code: str = ""            # optional 2FA code for /auth/login
     rtvc_verify_ssl: bool = True
     rtvc_timeout: float = 30.0
+    # Exploration du NAS : opération interactive, on abandonne vite pour ne
+    # jamais dépasser le délai d'un proxy (qui renverrait une page HTML).
+    rtvc_browse_timeout: float = 8.0
     # HLS readiness polling
     hls_poll_interval: float = 5.0
     hls_poll_timeout: float = 900.0    # 15 min max wait for RTVC transcode

@@ -258,9 +258,13 @@ class RTVCClient:
         """
         url = f"/nas/browse?path={quote(path, safe='/')}" if path else "/nas/browse"
         last_exc: Exception | None = None
-        for attempt in range(3):
+        # Budget de temps volontairement court : l'exploration est interactive.
+        # Mieux vaut répondre « indisponible » en quelques secondes que laisser
+        # le navigateur (ou un proxy comme Cloudflare) couper la connexion et
+        # renvoyer une page d'erreur HTML à la place du JSON attendu.
+        for attempt in range(2):
             try:
-                r = self._authed("GET", url)
+                r = self._authed("GET", url, timeout=settings.rtvc_browse_timeout)
                 r.raise_for_status()
                 data = r.json()
                 self._browse_cache[path] = (time.time(), data)  # mémorise
@@ -274,12 +278,13 @@ class RTVCClient:
                 ):
                     raise
                 last_exc = exc
-                time.sleep(1.5 * (attempt + 1))
-        # RTVC a un hoquet : on ressert le dernier résultat connu s'il est récent
+                time.sleep(1.0)
+        # RTVC a un hoquet : on ressert le dernier résultat connu (même un peu
+        # ancien : mieux vaut un contenu daté qu'un écran d'erreur).
         cached = self._browse_cache.get(path)
-        if cached and (time.time() - cached[0]) < self._browse_ttl:
+        if cached:
             return cached[1]
-        raise RTVCError(f"nas/browse indisponible après 3 essais : {last_exc}")
+        raise RTVCError(f"NAS RTVC injoignable : {last_exc}")
 
     def list_videos_recursive(
         self, root: str = "", max_depth: int = 6, max_files: int = 300
