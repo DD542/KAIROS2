@@ -26,7 +26,13 @@ if settings.autosync_enabled:
         "kairos-autosync": {
             "task": "kairos.autosync",
             "schedule": max(settings.autosync_interval_minutes, 1) * 60.0,
-        }
+        },
+        # Un worker tué en plein travail laisse un média « processing » que
+        # personne ne relance : ce passage horaire le rattrape.
+        "kairos-recover-stuck": {
+            "task": "kairos.recover_stuck",
+            "schedule": 3600.0,
+        },
     }
 
 

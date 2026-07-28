@@ -39,8 +39,24 @@ class Settings(BaseSettings):
     whisper_language: str = ""
     # Modèle MULTILINGUE : indispensable pour du contenu français. Même
     # dimension (384) que all-MiniLM-L6-v2, donc schéma pgvector inchangé.
+    #
+    # Pour une précision nettement supérieure, basculer sur un modèle de la
+    # famille E5 — même dimension 384, donc AUCUN changement de schéma :
+    #   EMBEDDING_MODEL=intfloat/multilingual-e5-small
+    #   EMBEDDING_QUERY_PREFIX="query: "
+    #   EMBEDDING_PASSAGE_PREFIX="passage: "
+    # puis POST /admin/reindex-embeddings (ré-encode le texte déjà transcrit,
+    # sans repasser par ffmpeg ni Whisper). Les préfixes sont OBLIGATOIRES avec
+    # E5 : sans eux, le modèle perd une large part de sa qualité.
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dim: int = 384
+    embedding_query_prefix: str = ""
+    embedding_passage_prefix: str = ""
+
+    # Recherche hybride : combine le vectoriel (sens) et le lexical (mots).
+    # À laisser activée — c'est elle qui rattrape noms propres, sigles et
+    # chiffres, invisibles pour la recherche purement sémantique.
+    search_hybrid: bool = True
 
     # Seuil de similarité optionnel (paramètre ?min_score= de /search).
     # Désactivé par défaut : sur ce modèle multilingue, même un texte non
@@ -70,6 +86,16 @@ class Settings(BaseSettings):
     autosync_batch: int = 20
 
     keyframe_interval_seconds: int = 3
+    # Extraction des images pour l'OCR. Depuis que l'on indexe les vidéos
+    # ENTIÈRES, l'échantillonnage régulier produit des milliers d'images
+    # quasi identiques : on découpe sur les changements de plan. Seuil entre 0
+    # et 1 — plus bas = plus d'images (plus sensible).
+    keyframe_scene_detect: bool = True
+    scene_change_threshold: float = 0.35
+    # Confiance minimale (0-100) d'un mot lu à l'écran pour être indexé.
+    # Tesseract n'avoue jamais son ignorance : sans ce seuil, il produit des
+    # suites de lettres inventées qui polluent le classement de recherche.
+    ocr_min_confidence: float = 60.0
     transcript_max_segment_seconds: float = 8.0
     transcript_gap_seconds: float = 0.8
 

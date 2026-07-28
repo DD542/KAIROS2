@@ -250,12 +250,27 @@ class RTVCClient:
     # l'API attend les « / » BRUTS dans l'URL (encodés en %2F elle répond
     # « Chemin non absolu ») et, pour /nas/download, le jeton en paramètre
     # ?token= et non dans l'en-tête Authorization.
+    @staticmethod
+    def _normalize_nas_path(path: str) -> str:
+        """Ramène une racine exprimée de diverses façons à la chaîne vide.
+
+        RTVC désigne la racine par ``""`` en entrée mais renvoie ``"/"`` dans le
+        champ ``parent``. Réinjecter ce ``"/"`` tel quel provoque un 502 : c'est
+        exactement ce qui cassait le bouton « Dossier parent » au premier
+        niveau. On normalise ici plutôt que chez chaque appelant.
+        """
+        p = (path or "").strip()
+        while len(p) > 1 and p.endswith("/"):
+            p = p[:-1]
+        return "" if p == "/" else p
+
     def nas_browse(self, path: str = "") -> Any:
         """Liste un dossier du NAS.
 
         L'API RTVC renvoie parfois des 500 passagers : on retente jusqu'à
         3 fois (lecture seule, donc sans risque) avant d'abandonner.
         """
+        path = self._normalize_nas_path(path)
         url = f"/nas/browse?path={quote(path, safe='/')}" if path else "/nas/browse"
         last_exc: Exception | None = None
         # Budget de temps volontairement court : l'exploration est interactive.

@@ -8,6 +8,7 @@ duration probe, 16 kHz mono WAV (audio), and periodic keyframes.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -91,11 +92,50 @@ def make_thumbnail(src: Path, out_path: Path, at_seconds: float, width: int = 32
     return out_path
 
 
-def extract_keyframes(src: Path, out_dir: Path) -> list[tuple[int, Path]]:
-    """Extract one frame every ``keyframe_interval_seconds``.
+def _scene_keyframes(src: Path, out_dir: Path) -> list[tuple[int, Path]]:
+    """Une image par CHANGEMENT DE PLAN, avec son horodatage réel.
 
-    Frames are named frame_<timestamp_ms>.jpg. Returns [(timestamp_ms, path)].
+    Sur une vidéo entière, échantillonner à intervalle fixe produit des
+    milliers d'images quasi identiques : l'OCR y passe l'essentiel du temps de
+    traitement pour ne lire que des répétitions du même texte. Découper sur les
+    ruptures visuelles donne une image par contenu distinct — c'est là que se
+    trouve le texte à l'écran.
+
+    ``showinfo`` écrit l'instant de chaque image retenue sur stderr ; on le lit
+    pour horodater précisément, au lieu de supposer un pas régulier.
     """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    threshold = settings.scene_change_threshold
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(src),
+            "-vf", f"select='gt(scene,{threshold})',showinfo",
+            "-vsync", "vfr", "-q:v", "3",
+            str(out_dir / "kf_%06d.jpg"),
+        ],
+        capture_output=True, text=True,
+    )
+    # Une vidéo sans rupture franche (plan fixe, caméra unique) ne déclenche
+    # aucune sélection : ffmpeg sort alors en erreur « no packets ». Ce n'est
+    # pas une panne, c'est un cas normal — on renvoie une liste vide et
+    # l'appelant retombe sur l'échantillonnage régulier.
+    if proc.returncode != 0 and not any(out_dir.glob("kf_*.jpg")):
+        return []
+
+    times = [float(m) for m in re.findall(r"pts_time:([0-9.]+)", proc.stderr or "")]
+    frames: list[tuple[int, Path]] = []
+    for idx, path in enumerate(sorted(out_dir.glob("kf_*.jpg"))):
+        # si showinfo n'a pas donné autant d'instants que d'images, on retombe
+        # sur une estimation régulière plutôt que de perdre l'image
+        ts_ms = int(times[idx] * 1000) if idx < len(times) else idx * 1000
+        target = out_dir / f"frame_{ts_ms}.jpg"
+        path.rename(target)
+        frames.append((ts_ms, target))
+    return frames
+
+
+def _interval_keyframes(src: Path, out_dir: Path) -> list[tuple[int, Path]]:
+    """Une image toutes les ``keyframe_interval_seconds`` (échantillonnage fixe)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     interval = settings.keyframe_interval_seconds
     fps = 1.0 / interval
@@ -114,3 +154,23 @@ def extract_keyframes(src: Path, out_dir: Path) -> list[tuple[int, Path]]:
         path.rename(target)
         frames.append((ts_ms, target))
     return frames
+
+
+def extract_keyframes(src: Path, out_dir: Path) -> list[tuple[int, Path]]:
+    """Images à soumettre à l'OCR, nommées frame_<timestamp_ms>.jpg.
+
+    Par défaut, découpage sur changement de plan ; repli sur l'échantillonnage
+    régulier si la détection ne rend rien (plan-séquence fixe, diaporama sans
+    rupture nette) pour ne jamais perdre le texte à l'écran.
+    """
+    if not settings.keyframe_scene_detect:
+        return _interval_keyframes(src, out_dir)
+    try:
+        frames = _scene_keyframes(src, out_dir)
+    except Exception:  # noqa: BLE001 - jamais au prix de perdre le texte à l'écran
+        frames = []
+    if frames:
+        return frames
+    for leftover in out_dir.glob("*.jpg"):
+        leftover.unlink(missing_ok=True)
+    return _interval_keyframes(src, out_dir)

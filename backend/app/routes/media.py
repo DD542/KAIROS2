@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -21,10 +21,47 @@ router = APIRouter(tags=["media"])
 
 
 @router.get("/media", response_model=list[MediaOut])
-def list_media(db: Session = Depends(get_db)):
-    return db.execute(
-        select(ProcessedMedia).order_by(ProcessedMedia.created_at.desc())
-    ).scalars().all()
+def list_media(
+    db: Session = Depends(get_db),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    status: str | None = Query(None, description="pending|processing|ready|failed"),
+    q: str | None = Query(None, description="Filtre sur le titre"),
+):
+    """Bibliothèque, la plus récente d'abord.
+
+    Paginée : l'interface se rafraîchit en continu, et tout renvoyer à chaque
+    passage devenait le poste de coût principal dès quelques centaines de
+    médias.
+    """
+    stmt = select(ProcessedMedia).order_by(ProcessedMedia.created_at.desc())
+    if status:
+        stmt = stmt.where(ProcessedMedia.status == status)
+    if q:
+        stmt = stmt.where(ProcessedMedia.title.ilike(f"%{q}%"))
+    return db.execute(stmt.limit(limit).offset(offset)).scalars().all()
+
+
+@router.get("/media/summary")
+def media_summary(db: Session = Depends(get_db)):
+    """Compteurs par statut — assez léger pour être interrogé en boucle.
+
+    C'est ce que l'interface consulte pour savoir si quelque chose a changé,
+    au lieu de retélécharger toute la bibliothèque toutes les quelques
+    secondes.
+    """
+    rows = db.execute(
+        select(ProcessedMedia.status, func.count())
+        .group_by(ProcessedMedia.status)
+    ).all()
+    counts = {status: n for status, n in rows}
+    return {
+        "total": sum(counts.values()),
+        "par_statut": counts,
+        # change dès qu'un média termine : l'interface s'en sert comme témoin
+        # de fraîcheur pour ne recharger la liste que si nécessaire.
+        "empreinte": f"{sum(counts.values())}:{counts.get('ready', 0)}:{counts.get('failed', 0)}:{counts.get('processing', 0)}",
+    }
 
 
 @router.get("/media/{rtvc_id}/status", response_model=MediaOut)
@@ -193,6 +230,38 @@ def retry_media(rtvc_id: int, db: Session = Depends(get_db)):
         process_local.delay(rtvc_id, pm.local_path, pm.title or str(rtvc_id))
     db.refresh(pm)
     return pm
+
+
+@router.post("/admin/reindex-embeddings")
+def reindex_embeddings_route(media_id: int | None = Query(None)):
+    """Ré-encode les textes déjà transcrits (changement de modèle, index lexical).
+
+    Ne retouche ni la transcription ni l'OCR : c'est l'opération qui rend un
+    changement de modèle d'embeddings abordable.
+    """
+    from app.worker.tasks import reindex_embeddings
+    res = reindex_embeddings.delay(media_id)
+    return {"task_id": res.id, "status": "queued", "media_id": media_id}
+
+
+@router.post("/admin/reocr")
+def reocr_route(media_id: int | None = Query(None)):
+    """Relit le texte à l'écran depuis la copie de lecture (aucun téléchargement).
+
+    À lancer une fois sur une bibliothèque indexée avant le filtrage par
+    confiance de Tesseract : c'est ce qui retire le charabia des résultats.
+    """
+    from app.worker.tasks import reocr
+    res = reocr.delay(media_id)
+    return {"task_id": res.id, "status": "queued", "media_id": media_id}
+
+
+@router.post("/admin/recover-stuck")
+def recover_stuck_route(older_than_minutes: int = Query(60, ge=1)):
+    """Relance les médias restés bloqués en « processing »."""
+    from app.worker.tasks import recover_stuck
+    res = recover_stuck.delay(older_than_minutes)
+    return {"task_id": res.id, "status": "queued"}
 
 
 @router.get("/tasks/{task_id}")

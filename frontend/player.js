@@ -21,7 +21,10 @@ function fmtTime(ms) {
 function esc(str) {
   const d = document.createElement("div");
   d.textContent = str ?? "";
-  return d.innerHTML;
+  // innerHTML n'echappe ni " ni ' : sans ces deux remplacements, un dossier
+  // nomme  Best "of" 2026  cassait l'attribut data-dir et le clic ne marchait
+  // plus (et un nom bien choisi pouvait injecter du balisage).
+  return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function seekTo(seconds) {
@@ -173,7 +176,7 @@ async function search(query) {
         <div class="hit-head">
           ${badge}
           <span class="hit-time">${fmtTime(h.start_ms)}</span>
-          <span class="hit-score">${Math.round(h.score * 100)}%</span>
+          <span class="hit-score" title="Pertinence relative au meilleur résultat">${Math.round((h.relevance ?? h.score) * 100)}%</span>
         </div>
         <div class="hit-text">${esc(h.text)}</div>
       </button>`;

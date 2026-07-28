@@ -1,10 +1,18 @@
 FROM python:3.11-slim
 
-# System deps: ffmpeg (transcode + keyframes + audio extract), tesseract (+FR).
+# System deps: ffmpeg (transcode + keyframes + audio extract), tesseract.
+# Plusieurs modèles OCR : lire de l'anglais avec le modèle français dégrade
+# nettement le résultat. Le code retombe sur le français si la langue détectée
+# n'a pas son paquet.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         tesseract-ocr \
         tesseract-ocr-fra \
+        tesseract-ocr-eng \
+        tesseract-ocr-spa \
+        tesseract-ocr-deu \
+        tesseract-ocr-ita \
+        tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

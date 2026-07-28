@@ -13,6 +13,7 @@ Post-processing improves perceived quality:
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 
@@ -20,12 +21,81 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.embeddings import embed_one
+from app.embeddings import embed_query
+from app.lang import FALLBACK, pg_config
 from app.models import Embedding, ProcessedMedia
+
+log = logging.getLogger("kairos.search")
 
 # Deux passages du même média à moins de X ms sont considérés comme le même
 # moment. Fenêtre volontairement large pour éviter les quasi-doublons.
 _COLLAPSE_MS = 12_000
+
+
+_COLS = (
+    Embedding.id,
+    Embedding.rtvc_id,
+    ProcessedMedia.title,
+    Embedding.source,
+    Embedding.start_ms,
+    Embedding.end_ms,
+    Embedding.text,
+)
+
+# Constante d'amortissement de la fusion RRF. 60 est la valeur de la
+# publication d'origine : elle empêche la 1re place d'écraser les suivantes,
+# tout en gardant un net avantage au haut de classement.
+_RRF_K = 60
+
+
+def _base(media_id: int | None):
+    stmt = (
+        select(*_COLS)
+        .join(ProcessedMedia, ProcessedMedia.rtvc_id == Embedding.rtvc_id)
+        .where(ProcessedMedia.status == "ready")
+    )
+    return stmt if media_id is None else stmt.where(Embedding.rtvc_id == media_id)
+
+
+def _semantic(db: Session, query: str, media_id: int | None, depth: int):
+    """Voisins les plus proches dans l'espace des sens (index HNSW)."""
+    distance = Embedding.embedding.cosine_distance(embed_query(query))
+    rows = db.execute(
+        _base(media_id).add_columns(distance.label("distance"))
+        .order_by(distance).limit(depth)
+    ).mappings().all()
+    return [(r, 1.0 - float(r["distance"])) for r in rows]
+
+
+def _lexical(db: Session, query: str, media_id: int | None, depth: int):
+    """Correspondances de mots — ce que le vecteur seul manque.
+
+    Les noms propres, sigles et chiffres n'ont pas de voisinage sémantique
+    utile : « RTVC », « 2026 » ou un nom de personne se retrouvent par les
+    lettres, pas par le sens. On interroge toutes les configurations de langue
+    présentes dans la bibliothèque à la fois, en les combinant par OU, pour
+    qu'une seule lecture d'index couvre une bibliothèque multilingue.
+    """
+    langs = [
+        row[0] for row in db.execute(
+            select(Embedding.lang).where(Embedding.tsv.isnot(None)).distinct()
+        ).all()
+    ]
+    configs = sorted({pg_config(lang) for lang in langs}) or [FALLBACK]
+
+    tsq = None
+    for cfg in configs:
+        part = func.plainto_tsquery(cfg, query)
+        tsq = part if tsq is None else tsq.op("||")(part)
+
+    rows = db.execute(
+        _base(media_id)
+        .add_columns(func.ts_rank_cd(Embedding.tsv, tsq).label("rank"))
+        .where(Embedding.tsv.op("@@")(tsq))
+        .order_by(func.ts_rank_cd(Embedding.tsv, tsq).desc())
+        .limit(depth)
+    ).mappings().all()
+    return [(r, float(r["rank"])) for r in rows]
 
 
 def search(
@@ -36,27 +106,32 @@ def search(
     min_score: float | None = None,
     per_video: int = 3,
 ) -> list[dict]:
-    qvec = embed_one(query)
-    distance = Embedding.embedding.cosine_distance(qvec)
+    """Recherche hybride : sens + mots, fusionnés par rang réciproque (RRF).
 
-    # On récupère large : le post-traitement (dédup + diversité) réduit ensuite.
-    stmt = (
-        select(
-            Embedding.rtvc_id,
-            ProcessedMedia.title,
-            Embedding.source,
-            Embedding.start_ms,
-            Embedding.end_ms,
-            Embedding.text,
-            distance.label("distance"),
-        )
-        .join(ProcessedMedia, ProcessedMedia.rtvc_id == Embedding.rtvc_id)
-        .where(ProcessedMedia.status == "ready")
-        .order_by(distance)
-        .limit(limit * 6)
-    )
-    if media_id is not None:
-        stmt = stmt.where(Embedding.rtvc_id == media_id)
+    Les deux moteurs échouent sur des cas opposés — le vectoriel sur les termes
+    rares, le lexical sur les reformulations. Les fusionner par le RANG (et non
+    par le score, que rien ne rend comparable entre deux moteurs) donne un
+    classement nettement plus sûr que l'un ou l'autre seul.
+    """
+    depth = max(limit * 6, 60)
+
+    dense = _semantic(db, query, media_id, depth)
+    try:
+        sparse = _lexical(db, query, media_id, depth) if settings.search_hybrid else []
+    except Exception as exc:  # noqa: BLE001 - index lexical absent ou non peuplé
+        db.rollback()
+        log.warning("recherche lexicale indisponible (%s) — repli sur le vectoriel", exc)
+        sparse = []
+
+    # Fusion : chaque moteur vote via l'inverse du rang qu'il attribue.
+    fused: dict[int, dict] = {}
+    for ranked in (dense, sparse):
+        for rank, (row, raw) in enumerate(ranked):
+            slot = fused.setdefault(
+                row["id"], {"row": row, "rrf": 0.0, "cosine": 0.0, "lexical": 0.0}
+            )
+            slot["rrf"] += 1.0 / (_RRF_K + rank + 1)
+            slot["cosine" if ranked is dense else "lexical"] = raw
 
     threshold = settings.search_min_score if min_score is None else min_score
 
@@ -64,9 +139,22 @@ def search(
     per_video_count: dict[int, int] = {}
     kept_starts: dict[int, list[int]] = {}  # moments déjà retenus par vidéo
 
-    for r in db.execute(stmt).mappings().all():
-        score = 1.0 - float(r["distance"])
-        if score < threshold:
+    ranked = sorted(fused.values(), key=lambda s: s["rrf"], reverse=True)
+    # Repère d'affichage : la similarité brute n'est PAS monotone avec le
+    # classement hybride (un résultat trouvé par les mots peut être premier
+    # avec un cosinus faible). Afficher ce cosinus donnait des pourcentages en
+    # apparence mal triés. On expose donc une pertinence relative au meilleur
+    # résultat, qui décroît toujours — le cosinus reste disponible à part.
+    best_rrf = ranked[0]["rrf"] if ranked else 1.0
+
+    for slot in ranked:
+        r = slot["row"]
+        # Le score montré reste la similarité sémantique : c'est la seule
+        # grandeur lisible pour l'utilisateur (0-100 %). Un résultat trouvé
+        # uniquement par les mots garde donc un score bas mais remonte grâce
+        # au RRF — c'est voulu.
+        score = slot["cosine"]
+        if score < threshold and not slot["lexical"]:
             continue
         vid = r["rtvc_id"]
         start_ms = r["start_ms"]
@@ -89,6 +177,8 @@ def search(
                 "end_ms": r["end_ms"],
                 "text": r["text"],
                 "score": score,
+                "relevance": round(slot["rrf"] / best_rrf, 4) if best_rrf else 0.0,
+                "matched": "mots" if slot["lexical"] and not slot["cosine"] else "sens",
                 "deep_link": f"/video/{vid}?t={start_s:.3f}",
             }
         )
@@ -131,19 +221,32 @@ def _phrase_around(text: str, needle: str) -> str:
     return (lead + snippet.strip(" ,.;:!?")).strip()
 
 
+# Ligatures qu'aucune normalisation Unicode ne déplie, alors que personne ne
+# les tape : « coeur » doit trouver « cœur », « boeuf » « bœuf ».
+_LIGATURES = {"œ": "oe", "æ": "ae", "ß": "ss"}
+
+
 def _fold_map(s: str) -> tuple[str, list[int]]:
     """Minuscules sans accents, + position d'origine de chaque caractère replié.
 
     Personne ne tape les accents dans une barre de recherche ; exiger la forme
     accentuée revenait à cacher la moitié du contenu d'une bibliothèque
-    francophone. La table d'index permet de reporter une correspondance trouvée
-    sur le texte replié vers le texte affiché, sans supposer que les deux ont la
-    même longueur (une ligature comme « œ » se déplie en deux caractères).
+    francophone. Unicode ne déplie PAS « œ » en « oe » (cette ligature n'a
+    aucune décomposition normalisée), d'où la table explicite ci-dessus. La
+    table d'index renvoyée permet de reporter une correspondance trouvée sur le
+    texte replié vers le texte affiché, sans supposer que les deux ont la même
+    longueur — c'est précisément le cas d'un caractère qui en devient deux.
     """
     out: list[str] = []
     idx: list[int] = []
     for i, ch in enumerate(s or ""):
-        for c in unicodedata.normalize("NFD", ch):
+        expanded = _LIGATURES.get(ch.lower())
+        if expanded is not None:
+            for c in expanded:
+                out.append(c)
+                idx.append(i)
+            continue
+        for c in unicodedata.normalize("NFKD", ch):
             if unicodedata.combining(c):
                 continue
             out.append(c.lower())

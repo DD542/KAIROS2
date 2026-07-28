@@ -39,6 +39,14 @@ class SearchHit(BaseModel):
     end_ms: int
     text: str
     score: float           # cosine similarity in [0, 1], higher is better
+    # Pertinence issue de la fusion hybride, relative au meilleur résultat.
+    # C'est elle qu'affiche l'interface : contrairement au cosinus, elle décroît
+    # toujours avec le rang.
+    relevance: float = 1.0
+    # 'sens' = trouvé par proximité sémantique, 'mots' = trouvé par le texte
+    # exact seul (nom propre, sigle, chiffre). Affiché pour que l'utilisateur
+    # comprenne pourquoi un résultat au score bas figure quand même en tête.
+    matched: str = "sens"
     deep_link: str         # /video/<rtvc_id>?t=<seconds>
 
 

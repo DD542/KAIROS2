@@ -22,11 +22,13 @@ from pathlib import Path
 
 log = logging.getLogger("kairos.pipeline")
 
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 
 from app.config import settings
 from app.db import SessionLocal
-from app.embeddings import embed_many
+from app.embeddings import embed_passages
+from app.lang import pg_config
 from app.models import Embedding, OcrText, ProcessedMedia, Transcription
 from app.pipeline import ocr, transcode, transcribe
 from app.rtvc import get_rtvc
@@ -51,6 +53,53 @@ MIN_INDEX_WORDS = 3
 def _worth_indexing(text: str) -> bool:
     t = (text or "").strip()
     return len(t) >= MIN_INDEX_CHARS and len(t.split()) >= MIN_INDEX_WORDS
+
+
+def _build_embeddings(db, media_id: int, force: bool = False) -> int:
+    """Encode les textes d'un média : vecteur (sens) + index lexical (mots).
+
+    Point de passage UNIQUE des deux voies d'indexation. Les avoir dupliquées
+    les faisait déjà diverger — seule l'une des deux appliquait le filtre
+    anti-bruit. Renvoie le nombre de vecteurs écrits.
+    """
+    if force:
+        db.execute(sql_delete(Embedding).where(Embedding.rtvc_id == media_id))
+        db.commit()
+    elif _count(db, Embedding, media_id) > 0:
+        return 0  # déjà fait (idempotence)
+
+    trans = [t for t in db.execute(
+        select(Transcription).where(Transcription.rtvc_id == media_id)
+    ).scalars().all() if _worth_indexing(t.text)]
+    ocrs = [o for o in db.execute(
+        select(OcrText).where(OcrText.rtvc_id == media_id)
+    ).scalars().all() if _worth_indexing(o.text)]
+
+    pm = db.get(ProcessedMedia, media_id)
+    lang = pm.language if pm is not None else None
+    # Analyseur lexical choisi d'après la langue détectée : c'est lui qui fait
+    # que « chantait » retrouve « chanter » en français.
+    cfg = pg_config(lang)
+
+    written = 0
+    for t, vec in zip(trans, embed_passages([t.text for t in trans])):
+        db.add(Embedding(
+            rtvc_id=media_id, source="audio",
+            start_ms=t.start_ms, end_ms=t.end_ms, text=t.text, embedding=vec,
+            lang=lang, tsv=func.to_tsvector(cfg, t.text),
+        ))
+        written += 1
+    kf_ms = settings.keyframe_interval_seconds * 1000
+    for o, vec in zip(ocrs, embed_passages([o.text for o in ocrs])):
+        db.add(Embedding(
+            rtvc_id=media_id, source="visual",
+            start_ms=o.timestamp_ms, end_ms=o.timestamp_ms + kf_ms,
+            text=o.text, embedding=vec,
+            lang=lang, tsv=func.to_tsvector(cfg, o.text),
+        ))
+        written += 1
+    db.commit()
+    return written
 
 
 def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
@@ -79,7 +128,12 @@ def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
         # est déjà en base. Un média reste ainsi cherchable par la parole.
         try:
             frames = transcode.extract_keyframes(video, work / "keyframes")
-            ocr_items = ocr.ocr_keyframes(frames)
+            # La langue vient d'être détectée par la transcription, juste au
+            # dessus : l'OCR s'en sert pour charger le bon modèle.
+            pm = db.get(ProcessedMedia, media_id)
+            ocr_items = ocr.ocr_keyframes(
+                frames, language=pm.language if pm is not None else None
+            )
             db.add_all(
                 OcrText(rtvc_id=media_id, timestamp_ms=o.timestamp_ms, text=o.text)
                 for o in ocr_items
@@ -89,27 +143,7 @@ def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
             db.rollback()
             log.warning("media=%s : OCR ignoré (%s)", media_id, exc)
 
-    if _count(db, Embedding, media_id) == 0:
-        trans = [t for t in db.execute(
-            select(Transcription).where(Transcription.rtvc_id == media_id)
-        ).scalars().all() if _worth_indexing(t.text)]
-        ocrs = [o for o in db.execute(
-            select(OcrText).where(OcrText.rtvc_id == media_id)
-        ).scalars().all() if _worth_indexing(o.text)]
-
-        for t, vec in zip(trans, embed_many([t.text for t in trans])):
-            db.add(Embedding(
-                rtvc_id=media_id, source="audio",
-                start_ms=t.start_ms, end_ms=t.end_ms, text=t.text, embedding=vec,
-            ))
-        kf_ms = settings.keyframe_interval_seconds * 1000
-        for o, vec in zip(ocrs, embed_many([o.text for o in ocrs])):
-            db.add(Embedding(
-                rtvc_id=media_id, source="visual",
-                start_ms=o.timestamp_ms, end_ms=o.timestamp_ms + kf_ms,
-                text=o.text, embedding=vec,
-            ))
-        db.commit()
+    _build_embeddings(db, media_id)
 
     return _count(db, Transcription, media_id), _count(db, OcrText, media_id)
 
@@ -181,6 +215,131 @@ def index_all_rtvc(self, root: str = "", max_seconds: int | None = None,
             process_rtvc_nas.delay(max_id, path, title, max_seconds, max_mb)
             queued += 1
         return {"root": root, "trouvees": len(paths), "mises_en_file": queued}
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="kairos.reindex_embeddings")
+def reindex_embeddings(self, media_id: int | None = None) -> dict:
+    """Ré-encode les textes déjà transcrits, sans repasser par ffmpeg ni Whisper.
+
+    C'est ce qui rend un changement de modèle d'embeddings praticable : la
+    partie coûteuse (transcription, OCR) est conservée, seule l'étape rapide
+    est refaite. Sert aussi à peupler l'index lexical d'une bibliothèque
+    indexée avant l'arrivée de la recherche hybride.
+    """
+    db = SessionLocal()
+    try:
+        ids = [media_id] if media_id is not None else [
+            i for (i,) in db.execute(
+                select(ProcessedMedia.rtvc_id).where(ProcessedMedia.status == "ready")
+            ).all()
+        ]
+        total = 0
+        for mid in ids:
+            try:
+                total += _build_embeddings(db, mid, force=True)
+            except Exception as exc:  # noqa: BLE001 - un média ne bloque pas les autres
+                db.rollback()
+                log.warning("reindex media=%s ignoré (%s)", mid, exc)
+        log.info("reindex : %s vecteurs réécrits sur %s média(s)", total, len(ids))
+        return {"medias": len(ids), "vecteurs": total}
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="kairos.reocr", **_RETRY)
+def reocr(self, media_id: int | None = None) -> dict:
+    """Relit le texte à l'écran depuis la copie de lecture conservée sur disque.
+
+    Les médias indexés avant le filtrage par confiance de Tesseract portent des
+    suites de lettres inventées. Courtes et sans voisinage sémantique naturel,
+    elles obtiennent un bon score sur à peu près n'importe quelle question et
+    faussent tout le classement.
+
+    On les relit plutôt que de deviner lesquelles sont fausses : le fichier de
+    lecture est toujours là, donc ni téléchargement ni transcription à refaire —
+    seulement ffmpeg et Tesseract. La transcription audio n'est pas touchée.
+    """
+    db = SessionLocal()
+    try:
+        stmt = select(ProcessedMedia).where(ProcessedMedia.playback_path.isnot(None))
+        if media_id is not None:
+            stmt = stmt.where(ProcessedMedia.rtvc_id == media_id)
+        medias = db.execute(stmt).scalars().all()
+
+        traites, avant, apres = 0, 0, 0
+        for pm in medias:
+            video = Path(pm.playback_path)
+            if not video.is_file():
+                continue
+            work = _work_dir(pm.rtvc_id) / "reocr"
+            try:
+                frames = transcode.extract_keyframes(video, work / "keyframes")
+                items = ocr.ocr_keyframes(frames, language=pm.language)
+            except Exception as exc:  # noqa: BLE001 - un média n'arrête pas les autres
+                log.warning("reocr media=%s ignoré (%s)", pm.rtvc_id, exc)
+                continue
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+
+            avant += _count(db, OcrText, pm.rtvc_id)
+            db.execute(sql_delete(OcrText).where(OcrText.rtvc_id == pm.rtvc_id))
+            db.execute(sql_delete(Embedding).where(
+                Embedding.rtvc_id == pm.rtvc_id, Embedding.source == "visual"
+            ))
+            db.add_all(
+                OcrText(rtvc_id=pm.rtvc_id, timestamp_ms=o.timestamp_ms, text=o.text)
+                for o in items
+            )
+            db.commit()
+            apres += len(items)
+            traites += 1
+            # les vecteurs « à l'écran » viennent d'être supprimés : on les
+            # reconstruit à partir du texte relu
+            _build_embeddings(db, pm.rtvc_id, force=True)
+
+        log.info("reocr : %s média(s), %s → %s entrées à l'écran", traites, avant, apres)
+        return {"medias": traites, "avant": avant, "apres": apres}
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name="kairos.recover_stuck")
+def recover_stuck(self, older_than_minutes: int = 60) -> dict:
+    """Relance les médias restés bloqués en « processing ».
+
+    Un worker tué en plein travail (redémarrage, plus de mémoire) laisse un
+    média dans cet état pour toujours : il n'apparaît ni comme prêt, ni comme
+    échoué, donc personne ne le relance. On ne touche qu'aux médias assez
+    anciens pour ne pas interrompre un traitement réellement en cours.
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    db = SessionLocal()
+    try:
+        stuck = db.execute(
+            select(ProcessedMedia)
+            .where(ProcessedMedia.status == "processing")
+            .where(ProcessedMedia.updated_at < cutoff)
+        ).scalars().all()
+        n = 0
+        for pm in stuck:
+            if not pm.local_path:
+                continue
+            pm.status = "pending"
+            pm.error = None
+            db.commit()
+            title = pm.title or str(pm.rtvc_id)
+            if pm.source == "rtvc-nas":
+                process_rtvc_nas.delay(pm.rtvc_id, pm.local_path, title)
+            else:
+                process_local.delay(pm.rtvc_id, pm.local_path, title)
+            n += 1
+        if n:
+            log.info("reprise : %s média(s) bloqués relancés", n)
+        return {"relances": n}
     finally:
         db.close()
 
@@ -437,7 +596,7 @@ def process_media(self, media_id: int, title: str | None = None) -> dict:
         # 4. keyframes -> Tesseract OCR (idempotent)
         if _count(db, OcrText, media_id) == 0:
             frames = transcode.extract_keyframes(src, work / "keyframes")
-            ocr_items = ocr.ocr_keyframes(frames)
+            ocr_items = ocr.ocr_keyframes(frames, language=pm.language)
             db.add_all(
                 OcrText(rtvc_id=media_id, timestamp_ms=o.timestamp_ms, text=o.text)
                 for o in ocr_items
@@ -445,30 +604,7 @@ def process_media(self, media_id: int, title: str | None = None) -> dict:
             db.commit()
 
         # 5. embeddings (audio + visual) -> pgvector (idempotent)
-        if _count(db, Embedding, media_id) == 0:
-            trans = db.execute(
-                select(Transcription).where(Transcription.rtvc_id == media_id)
-            ).scalars().all()
-            ocrs = db.execute(
-                select(OcrText).where(OcrText.rtvc_id == media_id)
-            ).scalars().all()
-
-            audio_vecs = embed_many([t.text for t in trans])
-            visual_vecs = embed_many([o.text for o in ocrs])
-
-            for t, vec in zip(trans, audio_vecs):
-                db.add(Embedding(
-                    rtvc_id=media_id, source="audio",
-                    start_ms=t.start_ms, end_ms=t.end_ms, text=t.text, embedding=vec,
-                ))
-            kf_ms = settings.keyframe_interval_seconds * 1000
-            for o, vec in zip(ocrs, visual_vecs):
-                db.add(Embedding(
-                    rtvc_id=media_id, source="visual",
-                    start_ms=o.timestamp_ms, end_ms=o.timestamp_ms + kf_ms,
-                    text=o.text, embedding=vec,
-                ))
-            db.commit()
+        _build_embeddings(db, media_id)
 
         # 6. done
         pm.status = "ready"

@@ -20,12 +20,12 @@ from app.db import get_db
 from app.models import ProcessedMedia
 from app.rtvc import get_rtvc
 from app.schemas import ProcessResponse
-from app.worker.tasks import process_local, process_rtvc_nas
+# VIDEO_EXT et LOCAL_ID_BASE vivent avec les tâches : deux listes d'extensions
+# séparées finiraient par diverger, et l'exploration ne montrerait plus ce que
+# l'indexation automatique sait traiter.
+from app.worker.tasks import LOCAL_ID_BASE, VIDEO_EXT, process_local, process_rtvc_nas
 
 router = APIRouter(tags=["ingestion locale"])
-
-LOCAL_ID_BASE = 900000
-VIDEO_EXT = {".mp4", ".ts", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpg", ".mpeg"}
 
 
 # 0 et None veulent tous deux dire « pas de limite ». Sans cette normalisation,

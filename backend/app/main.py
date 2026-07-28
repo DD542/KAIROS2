@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from app import migrate
 from app.config import settings
 from app.db import Base, engine
 from app.pages import render_page
@@ -46,6 +47,19 @@ _BAN_SECONDS = 300
 _fails: dict[str, list[float]] = defaultdict(list)
 _fails_lock = Lock()
 
+# Le comptage doit être PARTAGÉ : avec API_WORKERS=2, un compteur par process
+# double silencieusement le nombre d'essais tolérés, et le plafond ne veut plus
+# rien dire. Redis est déjà là pour Celery ; on s'en sert. S'il est
+# indisponible, on retombe sur le compteur mémoire — dégradé mais jamais
+# bloquant pour l'authentification.
+try:
+    import redis as _redis_lib
+
+    _redis = _redis_lib.Redis.from_url(settings.celery_broker_url, socket_timeout=0.5)
+    _redis.ping()
+except Exception:  # noqa: BLE001
+    _redis = None
+
 
 def _client_ip(request: Request) -> str:
     # derrière un reverse proxy (DSM, Cloudflare), l'IP réelle est dans XFF
@@ -56,6 +70,11 @@ def _client_ip(request: Request) -> str:
 
 
 def _too_many_fails(ip: str) -> bool:
+    if _redis is not None:
+        try:
+            return int(_redis.get(f"kairos:fails:{ip}") or 0) >= _MAX_FAILS
+        except Exception:  # noqa: BLE001 - Redis tombé : on continue en mémoire
+            pass
     now = time.time()
     with _fails_lock:
         recent = [t for t in _fails[ip] if now - t < _BAN_SECONDS]
@@ -64,6 +83,18 @@ def _too_many_fails(ip: str) -> bool:
 
 
 def _record_fail(ip: str) -> None:
+    if _redis is not None:
+        try:
+            key = f"kairos:fails:{ip}"
+            # La fenêtre repart à chaque échec : un attaquant qui insiste reste
+            # bloqué, un utilisateur qui s'est trompé est libéré au bout de 5 min.
+            pipe = _redis.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, _BAN_SECONDS)
+            pipe.execute()
+            return
+        except Exception:  # noqa: BLE001
+            pass
     with _fails_lock:
         _fails[ip].append(time.time())
 
@@ -132,16 +163,10 @@ def _warm_embeddings() -> None:
 def _init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    # unaccent rend les suggestions insensibles aux accents (« grace » trouve
-    # « grâce »). Optionnelle : sur une base où l'utilisateur n'a pas le droit
-    # de créer une extension, la recherche reste littérale plutôt que de
-    # bloquer le démarrage.
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
-    except Exception:  # noqa: BLE001
-        pass
     Base.metadata.create_all(bind=engine)
+    # Colonnes et index ajoutés après coup : create_all ne les poserait pas sur
+    # une base déjà remplie.
+    migrate.run(engine)
 
 
 app.include_router(webhook.router)

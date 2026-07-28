@@ -25,7 +25,10 @@ function fmtTime(ms) {
 function esc(str) {
   const d = document.createElement("div");
   d.textContent = str ?? "";
-  return d.innerHTML;
+  // innerHTML n'echappe ni " ni ' : sans ces deux remplacements, un dossier
+  // nomme  Best "of" 2026  cassait l'attribut data-dir et le clic ne marchait
+  // plus (et un nom bien choisi pouvait injecter du balisage).
+  return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // Lit un champ numérique en préservant le 0 (= « pas de limite »). `parseInt(..)
@@ -112,16 +115,22 @@ function renderHits() {
       const badge = h.source === "visual"
         ? '<span class="badge visual">à l\'écran</span>'
         : '<span class="badge audio">parlé</span>';
+      // Un résultat trouvé par le texte exact (nom propre, sigle, chiffre) a
+      // souvent un score sémantique bas : on explique sa présence plutôt que
+      // de laisser croire à une erreur de classement.
+      const why = h.matched === "mots"
+        ? '<span class="badge exact" title="Trouvé par correspondance exacte du texte">texte exact</span>'
+        : "";
       return `<a class="hit" href="/video/${h.rtvc_id}?t=${h.start_seconds}">
         <img class="hit-thumb" loading="lazy" alt=""
              src="${API}/media/${h.rtvc_id}/thumbnail?t=${h.start_seconds}"
              onerror="this.remove()" />
         <div class="hit-body">
           <div class="hit-head">
-            ${badge}
+            ${badge}${why}
             <span class="hit-time">${fmtTime(h.start_ms)}</span>
             <span class="hit-title">${esc(h.title || "média #" + h.rtvc_id)}</span>
-            <span class="hit-score">${Math.round(h.score * 100)}%</span>
+            <span class="hit-score" title="Pertinence relative au meilleur résultat">${Math.round((h.relevance ?? h.score) * 100)}%</span>
           </div>
           <div class="hit-text">${highlight(h.text, query)}</div>
         </div>
@@ -301,10 +310,26 @@ $("examples").addEventListener("click", (e) => {
 /* ---------------- bibliothèque ---------------- */
 
 let allMedia = [];
+// Empreinte du dernier état connu : le rafraîchissement automatique interroge
+// un compteur (quelques octets) et ne retélécharge la bibliothèque que si elle
+// a réellement changé. Sans cela, une bibliothèque de plusieurs centaines de
+// médias était retransmise en entier toutes les 4 secondes.
+let mediaFingerprint = null;
+
+async function pollMedia() {
+  try {
+    const s = await (await fetch(API + "/media/summary")).json();
+    if (s.empreinte === mediaFingerprint) return;
+    mediaFingerprint = s.empreinte;
+  } catch {
+    return; // serveur momentanément indisponible : on réessaiera au tour suivant
+  }
+  loadMedia();
+}
 
 async function loadMedia() {
   try {
-    allMedia = await (await fetch(API + "/media")).json();
+    allMedia = await (await fetch(API + "/media?limit=500")).json();
   } catch {
     $("media").innerHTML = '<div class="empty">Bibliothèque indisponible.</div>';
     return;
@@ -505,7 +530,11 @@ async function loadRtvc(path) {
 
   const rows = [];
   if (path) {
-    const parent = d.parent ?? path.replace(/\/[^/]*$/, "");
+    // RTVC désigne la racine par "/" dans `parent`, alors qu'il faut lui
+    // renvoyer une chaîne vide : sans cette normalisation, remonter depuis le
+    // premier niveau renvoyait une erreur 502.
+    const raw = d.parent ?? path.replace(/\/[^/]*$/, "");
+    const parent = raw === "/" ? "" : raw;
     rows.push(`<div class="file-row">
       <span class="fname">↩ <a href="#" data-dir="${esc(parent)}">Dossier parent</a></span>
     </div>`);
@@ -612,7 +641,7 @@ $("rtvc-list").addEventListener("click", async (e) => {
 loadMedia();
 loadFiles();
 loadRtvc("");
-setInterval(loadMedia, 4000);
+setInterval(pollMedia, 4000);
 
 // Restaure la dernière recherche (retour depuis le lecteur, ou lien partagé).
 (function restoreSearch() {

@@ -231,6 +231,12 @@ section { margin-top: 2.6rem; }
 }
 .badge.audio { background: var(--audio-soft); color: var(--audio); }
 .badge.visual { background: var(--visual-soft); color: var(--visual); }
+/* Résultat remonté par le texte exact plutôt que par le sens : neutre, pour
+   informer sans concurrencer le badge parlé/à l'écran. */
+.badge.exact {
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--muted);
+}
 
 /* ---------- états ---------- */
 .empty, .loading {

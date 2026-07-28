@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, DateTime, Index, Text, func
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import settings
@@ -74,6 +75,14 @@ class Embedding(Base):
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding_dim))
 
+    # Langue du média, recopiée ici pour que la recherche lexicale choisisse le
+    # bon analyseur sans jointure sur processed_media.
+    lang: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Index lexical (mots), complémentaire du vecteur (sens) : c'est lui qui
+    # rattrape les noms propres, sigles et chiffres, que la recherche purement
+    # sémantique manque régulièrement.
+    tsv: Mapped[str | None] = mapped_column(TSVECTOR, nullable=True)
+
 
 # HNSW cosine index for ANN search. HNSW always returns nearest neighbours
 # (ivfflat could return nothing when a probed list was empty on small data)
@@ -84,3 +93,7 @@ Index(
     postgresql_using="hnsw",
     postgresql_ops={"embedding": "vector_cosine_ops"},
 )
+
+# Pendant lexical de l'index vectoriel : c'est ce qui rend la moitié « mots »
+# de la recherche hybride instantanée.
+Index("idx_embeddings_tsv", Embedding.tsv, postgresql_using="gin")
