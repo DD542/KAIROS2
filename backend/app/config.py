@@ -10,6 +10,18 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
 
+    # ---- Base externe "Transcription Pipeline" (Mike, Supabase, lecture seule) ----
+    # C'est en réalité la base RTVC_Stockage elle-même (vérifié : public.medias.id
+    # == media_id RTVC, champ pour champ identique à /documents/library) avec un
+    # schéma `transcription` ajouté par-dessus. Kairos ne transcrit plus lui-même :
+    # la recherche interroge cette base EN DIRECT à chaque requête (l'analyse
+    # texte/segments se fait côté Postgres), rien n'est copié ni stocké localement.
+    transcription_db_dsn: str = (
+        "host=aws-1-eu-central-2.pooler.supabase.com port=5432 dbname=postgres "
+        "user=transcription_reader.qaqlqxdrxrguuhjikkth password=password2026 "
+        "sslmode=require"
+    )
+
     data_dir: str = "/data"
     frontend_dir: str = "/frontend"
     # Dossier (monté en lecture seule) où déposer des vidéos à indexer localement

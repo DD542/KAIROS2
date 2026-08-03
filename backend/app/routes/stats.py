@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Embedding, OcrText, ProcessedMedia, Transcription
+from app import transcription_db
 
 router = APIRouter(tags=["stats"])
 
@@ -89,10 +90,14 @@ def stats(db: Session = Depends(get_db)):
             "par_source": by_source,
         },
         "index": {
-            "transcriptions": db.scalar(select(func.count()).select_from(Transcription)),
+            # legacy : médias indexés avant le passage à la base externe.
+            "transcriptions_locales_heritees": db.scalar(select(func.count()).select_from(Transcription)),
             "ocr_texts": db.scalar(select(func.count()).select_from(OcrText)),
             "vecteurs": db.scalar(select(func.count()).select_from(Embedding)),
         },
+        # Kairos ne transcrit plus : le volume réel de parole cherchable vit
+        # dans la base externe "Transcription Pipeline", interrogée en direct.
+        "transcription_externe": transcription_db.stats(),
         "traitement": {
             "duree_moyenne_s": round(float(avg_seconds), 1) if avg_seconds else None,
         },

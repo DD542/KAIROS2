@@ -67,6 +67,29 @@ def _semantic(db: Session, query: str, media_id: int | None, depth: int):
     return [(r, 1.0 - float(r["distance"])) for r in rows]
 
 
+def _external(query: str, media_id: int | None, depth: int):
+    """Recherche EN DIRECT dans la base externe "Transcription Pipeline".
+
+    Kairos ne transcrit plus l'audio localement : c'est ici que la parole
+    redevient cherchable, via une requête plein texte côté Postgres externe
+    (voir app/transcription_db.py). Traitée comme une 3e voie lexicale dans
+    la fusion RRF, au même titre que l'index lexical local (OCR)."""
+    from app import transcription_db
+    rows = transcription_db.search(query, limit=depth, media_id=media_id)
+    out = []
+    for r in rows:
+        # Clé synthétique garantie négative : ne collisionne jamais avec un
+        # id local (Embedding.id est un BigInteger autoincrement positif).
+        synth_id = -(abs(hash((r["rtvc_id"], r["start_ms"]))) % 2_000_000_000 + 1)
+        row = {
+            "id": synth_id, "rtvc_id": r["rtvc_id"], "title": r["title"],
+            "source": "audio", "start_ms": r["start_ms"], "end_ms": r["end_ms"],
+            "text": r["text"],
+        }
+        out.append((row, r["score"]))
+    return out
+
+
 def _lexical(db: Session, query: str, media_id: int | None, depth: int):
     """Correspondances de mots — ce que le vecteur seul manque.
 
@@ -106,12 +129,15 @@ def search(
     min_score: float | None = None,
     per_video: int = 3,
 ) -> list[dict]:
-    """Recherche hybride : sens + mots, fusionnés par rang réciproque (RRF).
+    """Recherche hybride : sens (visuel local) + mots (visuel local + parole
+    externe), fusionnés par rang réciproque (RRF).
 
-    Les deux moteurs échouent sur des cas opposés — le vectoriel sur les termes
-    rares, le lexical sur les reformulations. Les fusionner par le RANG (et non
-    par le score, que rien ne rend comparable entre deux moteurs) donne un
-    classement nettement plus sûr que l'un ou l'autre seul.
+    Trois moteurs, chacun fort là où les autres échouent : le vectoriel local
+    sur les termes rares/reformulations (texte à l'écran), le lexical local
+    pour les noms propres/sigles à l'écran, et la base externe
+    "Transcription Pipeline" pour tout ce qui a été DIT (Kairos ne transcrit
+    plus l'audio lui-même). Fusionnés par le RANG (et non par le score, que
+    rien ne rend comparable entre trois moteurs différents).
     """
     depth = max(limit * 6, 60)
 
@@ -122,16 +148,27 @@ def search(
         db.rollback()
         log.warning("recherche lexicale indisponible (%s) — repli sur le vectoriel", exc)
         sparse = []
+    try:
+        external = _external(query, media_id, depth)
+    except Exception as exc:  # noqa: BLE001 - base externe injoignable
+        log.warning("recherche externe (transcription pipeline) indisponible (%s)", exc)
+        external = []
 
     # Fusion : chaque moteur vote via l'inverse du rang qu'il attribue.
+    # sparse (mots, local) et external (mots, base externe) partagent le même
+    # emplacement "lexical" : les deux sont des correspondances littérales,
+    # pas sémantiques — c'est cette distinction qui pilote l'affichage.
     fused: dict[int, dict] = {}
-    for ranked in (dense, sparse):
+    for kind, ranked in (("dense", dense), ("sparse", sparse), ("external", external)):
         for rank, (row, raw) in enumerate(ranked):
             slot = fused.setdefault(
                 row["id"], {"row": row, "rrf": 0.0, "cosine": 0.0, "lexical": 0.0}
             )
             slot["rrf"] += 1.0 / (_RRF_K + rank + 1)
-            slot["cosine" if ranked is dense else "lexical"] = raw
+            if kind == "dense":
+                slot["cosine"] = raw
+            else:
+                slot["lexical"] = max(slot["lexical"], raw)
 
     threshold = settings.search_min_score if min_score is None else min_score
 

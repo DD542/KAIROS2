@@ -73,6 +73,18 @@ def media_status(rtvc_id: int, db: Session = Depends(get_db)):
 
 
 def _segments(db: Session, rtvc_id: int) -> list[dict]:
+    """Transcription horodatée d'un média.
+
+    Kairos ne stocke plus de transcription localement : on lit les segments
+    EN DIRECT depuis la base externe "Transcription Pipeline" (voir
+    app/transcription_db.py). La table locale ``Transcription`` n'est
+    conservée que pour les médias indexés avant ce changement (repli).
+    """
+    from app import transcription_db
+    live = transcription_db.get_segments(rtvc_id)
+    if live:
+        return live
+
     from app.models import Transcription
     rows = db.execute(
         select(Transcription.start_ms, Transcription.end_ms, Transcription.text)

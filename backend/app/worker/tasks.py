@@ -1,11 +1,14 @@
 """The Kairos V2 pipeline as a Celery task.
 
-Kairos does NOT transcode or stream — RTVC does. Per RTVC media_id:
+Kairos does NOT transcode or stream — RTVC does. Kairos does NOT transcribe
+audio either anymore: speech search is served LIVE from the external
+"Transcription Pipeline" database (see app/transcription_db.py), queried at
+search time — never copied locally. Per RTVC media_id:
   1. ensure HLS is ready on RTVC (generate-hls + poll hls-status)
-  2. download the raw source from RTVC (signed-url / stream)
-  3. extract audio (local FFmpeg) -> Vosk transcription
+  2. download the raw source from RTVC (signed-url / stream) — only if OCR needs it
+  3. best-effort: read the transcript LANGUAGE from the external DB (metadata only)
   4. extract keyframes (local FFmpeg) -> Tesseract OCR
-  5. embeddings (audio + visual) -> pgvector
+  5. embeddings (visual only) -> pgvector
   6. mark ready
 
 Idempotent: each sub-step is skipped if its rows already exist for the media_id,
@@ -29,9 +32,10 @@ from app.config import settings
 from app.db import SessionLocal
 from app.embeddings import embed_passages
 from app.lang import pg_config
-from app.models import Embedding, OcrText, ProcessedMedia, Transcription
-from app.pipeline import ocr, transcode, transcribe
+from app.models import Embedding, OcrText, ProcessedMedia
+from app.pipeline import ocr, transcode
 from app.rtvc import get_rtvc
+from app import transcription_db
 from app.worker.celery_app import celery_app
 
 
@@ -56,11 +60,12 @@ def _worth_indexing(text: str) -> bool:
 
 
 def _build_embeddings(db, media_id: int, force: bool = False) -> int:
-    """Encode les textes d'un média : vecteur (sens) + index lexical (mots).
+    """Encode les textes OCR (visuel) d'un média : vecteur (sens) + index lexical.
 
-    Point de passage UNIQUE des deux voies d'indexation. Les avoir dupliquées
-    les faisait déjà diverger — seule l'une des deux appliquait le filtre
-    anti-bruit. Renvoie le nombre de vecteurs écrits.
+    L'audio n'est PLUS embarqué ici : Kairos ne transcrit plus localement, la
+    recherche sur la parole interroge la base externe "Transcription Pipeline"
+    EN DIRECT (voir app/transcription_db.py), sans copie locale. Renvoie le
+    nombre de vecteurs écrits.
     """
     if force:
         db.execute(sql_delete(Embedding).where(Embedding.rtvc_id == media_id))
@@ -68,9 +73,6 @@ def _build_embeddings(db, media_id: int, force: bool = False) -> int:
     elif _count(db, Embedding, media_id) > 0:
         return 0  # déjà fait (idempotence)
 
-    trans = [t for t in db.execute(
-        select(Transcription).where(Transcription.rtvc_id == media_id)
-    ).scalars().all() if _worth_indexing(t.text)]
     ocrs = [o for o in db.execute(
         select(OcrText).where(OcrText.rtvc_id == media_id)
     ).scalars().all() if _worth_indexing(o.text)]
@@ -82,13 +84,6 @@ def _build_embeddings(db, media_id: int, force: bool = False) -> int:
     cfg = pg_config(lang)
 
     written = 0
-    for t, vec in zip(trans, embed_passages([t.text for t in trans])):
-        db.add(Embedding(
-            rtvc_id=media_id, source="audio",
-            start_ms=t.start_ms, end_ms=t.end_ms, text=t.text, embedding=vec,
-            lang=lang, tsv=func.to_tsvector(cfg, t.text),
-        ))
-        written += 1
     kf_ms = settings.keyframe_interval_seconds * 1000
     for o, vec in zip(ocrs, embed_passages([o.text for o in ocrs])):
         db.add(Embedding(
@@ -103,33 +98,30 @@ def _build_embeddings(db, media_id: int, force: bool = False) -> int:
 
 
 def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
-    """Shared AI core: audio -> Vosk, keyframes -> OCR, both -> pgvector.
+    """Shared AI core: keyframes -> OCR -> pgvector. La transcription audio
+    n'est PLUS faite ici (ni Whisper ni Vosk) : la recherche sur la parole
+    interroge la base externe "Transcription Pipeline" en direct.
 
-    Returns (nb_transcriptions, nb_ocr). Each sub-step is skipped when its rows
-    already exist for this media, so re-runs are safe.
+    Returns (nb_transcriptions_locales, nb_ocr). nb_transcriptions_locales est
+    désormais toujours 0 — le nombre réel de segments dispo vient de la base
+    externe et se lit au moment de la recherche, pas de l'indexation.
     """
-    if _count(db, Transcription, media_id) == 0:
-        wav = transcode.extract_audio_wav(video, work / "audio.wav")
-        segments, language = transcribe.transcribe(wav)
-        db.add_all(
-            Transcription(rtvc_id=media_id, start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
-            for s in segments
-        )
-        if language:
-            pm = db.get(ProcessedMedia, media_id)
-            if pm is not None:
-                pm.language = language
-            log.info("media=%s : langue détectée = %s", media_id, language)
-        db.commit()
+    pm = db.get(ProcessedMedia, media_id)
+    if pm is not None and pm.language is None:
+        # Best-effort : récupère juste le CODE langue (pas le texte) depuis la
+        # base externe, pour que l'OCR charge le bon modèle Tesseract.
+        lang = transcription_db.get_transcript_language(media_id)
+        if lang:
+            pm.language = lang
+            db.commit()
+            log.info("media=%s : langue (base externe) = %s", media_id, lang)
 
     if _count(db, OcrText, media_id) == 0:
         # L'OCR (visuel) est secondaire : s'il échoue (image illisible, format
-        # exotique…), on continue quand même — la transcription audio, elle,
-        # est déjà en base. Un média reste ainsi cherchable par la parole.
+        # exotique…), on continue quand même — un média reste cherchable par la
+        # parole via la base externe même sans texte à l'écran indexé.
         try:
             frames = transcode.extract_keyframes(video, work / "keyframes")
-            # La langue vient d'être détectée par la transcription, juste au
-            # dessus : l'OCR s'en sert pour charger le bon modèle.
             pm = db.get(ProcessedMedia, media_id)
             ocr_items = ocr.ocr_keyframes(
                 frames, language=pm.language if pm is not None else None
@@ -145,7 +137,8 @@ def _index_media(db, media_id: int, video: Path, work: Path) -> tuple[int, int]:
 
     _build_embeddings(db, media_id)
 
-    return _count(db, Transcription, media_id), _count(db, OcrText, media_id)
+    n_transcript_ext = len(transcription_db.get_segments(media_id))
+    return n_transcript_ext, _count(db, OcrText, media_id)
 
 
 def _ingest_file(db, pm, media_id: int, src: Path, max_seconds: int | None) -> dict:
@@ -572,26 +565,20 @@ def process_media(self, media_id: int, title: str | None = None) -> dict:
         pm.hls_ready = True
         db.commit()
 
-        # 2. download the raw source for local AI processing
+        # 2. download the raw source for local AI processing (OCR only now)
         src = work / "source"
-        need_media = _count(db, Transcription, media_id) == 0 or \
-            _count(db, OcrText, media_id) == 0
-        if need_media:
+        if _count(db, OcrText, media_id) == 0:
             rtvc.download_source(media_id, src)
             pm.duration_ms = transcode.probe_duration_ms(src)
             db.commit()
 
-        # 3. audio -> transcription Whisper (idempotent)
-        if _count(db, Transcription, media_id) == 0:
-            wav = transcode.extract_audio_wav(src, work / "audio.wav")
-            segments, language = transcribe.transcribe(wav)
-            db.add_all(
-                Transcription(rtvc_id=media_id, start_ms=s.start_ms, end_ms=s.end_ms, text=s.text)
-                for s in segments
-            )
-            if language:
-                pm.language = language
-            db.commit()
+        # 3. langue (best-effort, depuis la base externe "Transcription
+        #    Pipeline" — Kairos ne transcrit plus lui-même, voir _index_media)
+        if pm.language is None:
+            lang = transcription_db.get_transcript_language(media_id)
+            if lang:
+                pm.language = lang
+                db.commit()
 
         # 4. keyframes -> Tesseract OCR (idempotent)
         if _count(db, OcrText, media_id) == 0:
@@ -615,7 +602,8 @@ def process_media(self, media_id: int, title: str | None = None) -> dict:
         return {
             "rtvc_id": media_id,
             "status": "ready",
-            "transcriptions": _count(db, Transcription, media_id),
+            # transcription: plus stockée localement, lue en direct à la recherche.
+            "transcript_segments_externes": len(transcription_db.get_segments(media_id)),
             "ocr_texts": _count(db, OcrText, media_id),
         }
     except Exception as exc:  # noqa: BLE001 - record and re-raise for Celery

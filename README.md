@@ -6,8 +6,8 @@ le **timestamp exact** dans la vidéo et lance la lecture (HLS RTVC) pile à cet
 endroit.
 
 *RTVC gère la vidéo (upload, transcodage/HLS, streaming, auth). Kairos gère
-l'IA (Vosk + Tesseract + pgvector).* Rien n'est réécrit ; on se branche sur les
-endpoints RTVC. 100 % souverain : audio et images ne quittent pas le serveur.
+l'IA (OCR + recherche + pgvector).* Rien n'est réécrit ; on se branche sur les
+endpoints RTVC. 100 % souverain : images et texte ne quittent pas le serveur.
 
 ## Stack
 
@@ -16,16 +16,21 @@ endpoints RTVC. 100 % souverain : audio et images ne quittent pas le serveur.
 | Backend API | FastAPI |
 | Base vectorielle | PostgreSQL + pgvector |
 | File d'attente | Celery + Redis |
-| Transcription | **faster-whisper** (modèle `small`, FR, CPU int8) |
-| OCR | Tesseract (FR) |
-| Embeddings | sentence-transformers `all-MiniLM-L6-v2` (384 d) |
+| Transcription (parole) | **base externe "Transcription Pipeline"**, interrogée en direct |
+| OCR (texte à l'écran) | Tesseract (FR) |
+| Embeddings (visuel) | sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2` (384 d) |
 | Vidéo / HLS / stream | **délégué à RTVC** (`api.rtvc-media.com`) |
 | Frontend | Video.js (HLS via stream-token RTVC) |
 
-> **Transcription.** Kairos utilise **faster-whisper** (CTranslate2, int8) :
-> précis sur le français réel, ponctuation/casse correctes, tout en local sur
-> CPU. Modèle réglable via `WHISPER_MODEL` (`base`/`small`/`medium`). Le module
-> `app/pipeline/transcribe.py` respecte le contrat `list[Segment]`.
+> **Transcription.** Kairos ne transcrit **plus** l'audio lui-même (l'ancien
+> pipeline faster-whisper est arrêté). La recherche sur la parole interroge EN
+> DIRECT, à chaque requête, une base externe déjà remplie par un pipeline de
+> transcription tiers (~31 000 vidéos cataloguées, transcriptions en cours de
+> complétion) — voir `app/transcription_db.py`. L'analyse texte (plein texte
+> Postgres) se fait côté base, rien n'est copié ni stocké localement. Vérifié :
+> cette base est la base RTVC_Stockage elle-même (`public.medias.id` ==
+> `media_id` RTVC), donc aucune correspondance de chemin n'est nécessaire.
+> Configuré via `TRANSCRIPTION_DB_DSN` (`.env`), compte lecture seule.
 
 ## Démarrage
 
@@ -190,8 +195,9 @@ backend/app/
   config.py db.py      # settings (dont creds RTVC) + session
   models.py schemas.py # tables rtvc_id + DTO
   rtvc.py              # client RTVC (OAuth2, hls-status, signed-url, stream-token)
+  transcription_db.py  # base externe "Transcription Pipeline" — parole en direct
   embeddings.py search.py
-  pipeline/            # transcode(local ffmpeg) / transcribe(Vosk) / ocr
+  pipeline/            # transcode(local ffmpeg) / ocr — plus de transcribe() local
   worker/              # celery_app + tasks.process_media (orchestration RTVC)
   routes/              # webhook, search, media (playback)
 db/init.sql            # extension vector + tables (rtvc_id) + ivfflat
