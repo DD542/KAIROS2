@@ -62,7 +62,7 @@ processes = ["web"]
   number = 443
   handlers = ["tls", "http"]
 
-[mounts]
+[[mounts]]
 # Persistent storage for media files
 source = "media_storage"
 destination = "/data"
@@ -70,10 +70,6 @@ destination = "/data"
 # Input media staging (read-only in prod)
 # source = "media_input"
 # destination = "/media_in"
-
-[[mounts]]
-source = "media_storage"
-destination = "/data"
 
 # NOTES ON KAIROS ARCHITECTURE FOR FLY.IO:
 #
