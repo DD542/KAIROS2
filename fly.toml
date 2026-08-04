@@ -7,7 +7,7 @@
 # To deploy on Fly.io: flyctl deploy
 # To deploy elsewhere: use docker-compose.yml or docker-compose.prod.yml
 
-app = "kairos"
+app = "kairos-znpphq"
 primary_region = "cdg"  # Paris, France
 
 [build]
@@ -40,6 +40,7 @@ force_https = true
 auto_stop_machines = true
 auto_start_machines = true
 min_machines_running = 1
+processes = ["web"]
 
 [[http_service.checks]]
 grace_period = "30s"
@@ -47,20 +48,6 @@ interval = "30s"
 timeout = "5s"
 method = "GET"
 path = "/health"
-
-[[services]]
-protocol = "http"
-internal_port = 8000
-processes = ["web"]
-
-  [[services.ports]]
-  number = 80
-  handlers = ["http"]
-  force_https = true
-
-  [[services.ports]]
-  number = 443
-  handlers = ["tls", "http"]
 
 [[mounts]]
 # Persistent storage for media files
@@ -75,12 +62,12 @@ destination = "/data"
 #
 # 1. DATABASE: Use Fly Postgres (managed)
 #    flyctl postgres create --name kairos-db --region cdg --vm-size shared-cpu-1x
-#    flyctl postgres attach kairos-db --app kairos
+#    flyctl postgres attach kairos-db --app kairos-znpphq
 #    Fly.io will inject DATABASE_URL automatically
 #
 # 2. REDIS: Use Fly Redis (managed)
 #    flyctl redis create --name kairos-redis --region cdg --plan paying-shared-1x
-#    flyctl redis attach kairos-redis --app kairos
+#    flyctl redis attach kairos-redis --app kairos-znpphq
 #    Fly.io will inject REDIS_URL automatically, convert to CELERY_BROKER_URL
 #
 # 3. CELERY WORKERS: NOT INCLUDED in this fly.toml
