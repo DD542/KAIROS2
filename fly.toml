@@ -34,6 +34,15 @@ KAIROS_PASSWORD = "KairosDemo2026"
 # For Celery workers, see notes below
 web = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
+[[vm]]
+# 256 Mo (defaut shared-cpu-1x) est insuffisant : le simple `import torch` +
+# sentence-transformers (charges par app/embeddings.py, meme sans transcrire
+# l'audio localement) depasse deja ce plafond -> OOM kill en boucle (~30-45s
+# apres le demarrage, avant meme la 1ere requete). 1 Go donne la marge
+# necessaire sans passer sur performance-1x (2 Go, plus cher).
+size = "shared-cpu-1x"
+memory = "1gb"
+
 [http_service]
 internal_port = 8000
 force_https = true
