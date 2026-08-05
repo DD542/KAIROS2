@@ -1,4 +1,5 @@
 # Fly.io deployment config for Kairos
+
 # ⚠️ IMPORTANT: This file is for Fly.io ONLY. It does NOT affect:
 #   - Local dev (docker-compose up)
 #   - GCP (docker-compose -f docker-compose.prod.yml up)
@@ -37,11 +38,13 @@ web = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
 [[vm]]
 # 256 Mo (defaut shared-cpu-1x) est insuffisant : le simple `import torch` +
 # sentence-transformers (charges par app/embeddings.py, meme sans transcrire
-# l'audio localement) depasse deja ce plafond -> OOM kill en boucle (~30-45s
-# apres le demarrage, avant meme la 1ere requete). 1 Go donne la marge
-# necessaire sans passer sur performance-1x (2 Go, plus cher).
+# l'audio localement) depasse deja ce plafond -> OOM kill en boucle. Meme a
+# 1 Go la machine EXISTANTE continuait a etre tuee a ~860 Mo resident (le
+# rolling deploy ne redimensionne pas toujours une machine deja provisionnee) :
+# passe a 2 Go pour une vraie marge. Forcer aussi le redimensionnement de la
+# machine existante : flyctl scale memory 2048 --app kairos-znpphq
 size = "shared-cpu-1x"
-memory = "1gb"
+memory = "2gb"
 
 [http_service]
 internal_port = 8000
