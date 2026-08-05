@@ -1,0 +1,40 @@
+# Fly.io deployment config for Kairos's Postgres+pgvector database.
+#
+# POURQUOI CE FICHIER SEPARE : `flyctl postgres create` provisionne le
+# cluster "postgres-flex" standard de Fly, qui n'embarque PAS l'extension
+# pgvector (CREATE EXTENSION vector echoue : "extension not available").
+# On deploie donc directement l'image `pgvector/pgvector:pg16` — la MEME
+# que celle utilisee en local (docker-compose.yml) — comme une app Fly a
+# part entiere, un seul conteneur, jamais exposee publiquement (accessible
+# uniquement depuis les autres apps du meme compte via le reseau prive Fly
+# 6PN, en `<app>.internal:5432` — aucun bloc [[services]] necessaire pour
+# ca, c'est automatique).
+#
+# Deploiement :
+#   flyctl apps create kairos-vectordb
+#   flyctl secrets set POSTGRES_PASSWORD=<mot-de-passe-fort> --app kairos-vectordb
+#   flyctl volumes create pgdata --app kairos-vectordb --region cdg --size 10
+#   flyctl deploy --config db/fly.toml --app kairos-vectordb
+#
+# Puis relier Kairos a cette base :
+#   flyctl secrets set DATABASE_URL="postgresql+psycopg://kairos:<mot-de-passe>@kairos-vectordb.internal:5432/kairos" --app kairos-znpphq
+#   flyctl deploy --app kairos-znpphq
+
+app = "kairos-vectordb"
+primary_region = "cdg"
+
+[build]
+image = "pgvector/pgvector:pg16"
+
+[env]
+POSTGRES_USER = "kairos"
+POSTGRES_DB = "kairos"
+PGDATA = "/var/lib/postgresql/data/pgdata"
+
+[[mounts]]
+source = "pgdata"
+destination = "/var/lib/postgresql/data"
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "512mb"
