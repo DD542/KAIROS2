@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,6 +8,22 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://kairos:kairos@localhost:5433/kairos"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """Force le dialecte psycopg3 sur l'URL Postgres.
+
+        Fly Postgres (flyctl postgres attach) injecte DATABASE_URL au format
+        `postgres://...`, un schema que SQLAlchemy 2.x ne reconnait plus
+        (NoSuchModuleError: sqlalchemy.dialects:postgres). On reecrit vers
+        `postgresql+psycopg://...`, le driver installe (psycopg[binary]).
+        """
+        if isinstance(v, str) and v.startswith("postgres://"):
+            return "postgresql+psycopg://" + v[len("postgres://"):]
+        if isinstance(v, str) and v.startswith("postgresql://"):
+            return "postgresql+psycopg://" + v[len("postgresql://"):]
+        return v
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
 
