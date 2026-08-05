@@ -1,0 +1,30 @@
+# Fly.io deployment config for Kairos's Redis (file de taches Celery).
+#
+# POURQUOI CE FICHIER SEPARE : le worker Celery a besoin d'un broker. On
+# deploie `redis:7-alpine` — la MEME image qu'en local (docker-compose.yml) —
+# comme une app Fly a part, jamais exposee publiquement : accessible
+# uniquement depuis les autres apps du compte via le reseau prive Fly (6PN),
+# en `kairos-broker.internal:6379`.
+#
+# Alternative ecartee : `flyctl redis create` (Upstash) impose du TLS
+# (rediss://) et une configuration SSL supplementaire cote Celery, pour un
+# besoin ici purement interne.
+#
+# PAS DE VOLUME : une file de taches est par nature ephemere. Si Redis
+# redemarre, les taches en attente sont perdues — c'est acceptable ici
+# (l'indexation est relancable a la main, et `kairos.recover_stuck` rattrape
+# les medias restes bloques). Cela evite un volume payant de plus.
+#
+# Deploiement :
+#   flyctl apps create kairos-broker
+#   flyctl deploy --config redis/fly.toml --app kairos-broker
+
+app = "kairos-broker"
+primary_region = "cdg"
+
+[build]
+image = "redis:7-alpine"
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "256mb"

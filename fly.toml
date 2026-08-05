@@ -31,9 +31,12 @@ HLS_POLL_TIMEOUT = "900"
 KAIROS_PASSWORD = "KairosDemo2026"
 
 [processes]
-# Fly.io single-process model: only the API server runs
-# For Celery workers, see notes below
 web = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+# Worker d'indexation (OCR + embeddings). Necessite l'app Redis
+# `kairos-broker` (voir redis/fly.toml) et les secrets CELERY_BROKER_URL /
+# CELERY_RESULT_BACKEND. concurrency=1 : une seule video a la fois, le
+# traitement est deja gourmand en CPU/RAM.
+worker = "celery -A app.worker.celery_app worker --loglevel=info --concurrency=1"
 
 [[vm]]
 # 256 Mo (defaut shared-cpu-1x) est insuffisant : le simple `import torch` +
@@ -62,9 +65,18 @@ method = "GET"
 path = "/health"
 
 [[mounts]]
-# Persistent storage for media files
+# Persistent storage for media files.
+# processes = ["web"] est OBLIGATOIRE depuis l'ajout du groupe "worker" : un
+# volume Fly est rattache a UNE machine et ne peut pas etre partage entre
+# groupes de process. Sans cette ligne, Fly reclamerait un volume par groupe.
+# Consequence assumee : le worker ecrit ses fichiers de travail sur un disque
+# ephemere. Ce qu'il produit d'important (transcriptions, OCR, embeddings) va
+# en base Postgres, donc partage ; seule la copie de lecture video n'est pas
+# visible par le web — la lecture video n'est de toute facon pas disponible
+# en prod pour les medias venant de la base externe.
 source = "media_storage"
 destination = "/data"
+processes = ["web"]
 
 # Input media staging (read-only in prod)
 # source = "media_input"
@@ -72,26 +84,19 @@ destination = "/data"
 
 # NOTES ON KAIROS ARCHITECTURE FOR FLY.IO:
 #
-# 1. DATABASE: Use Fly Postgres (managed)
-#    flyctl postgres create --name kairos-db --region cdg --vm-size shared-cpu-1x
-#    flyctl postgres attach kairos-db --app kairos-znpphq
-#    Fly.io will inject DATABASE_URL automatically
+# 1. DATABASE: PAS `flyctl postgres create` — l'image postgres-flex de Fly
+#    n'embarque PAS pgvector (CREATE EXTENSION vector -> "not available").
+#    Deployer db/fly.toml (image pgvector/pgvector:pg16), puis :
+#    flyctl secrets set DATABASE_URL="postgresql+psycopg://kairos:<mdp>@kairos-vectordb.internal:5432/kairos" --app kairos-znpphq
 #
-# 2. REDIS: Use Fly Redis (managed)
-#    flyctl redis create --name kairos-redis --region cdg --plan paying-shared-1x
-#    flyctl redis attach kairos-redis --app kairos-znpphq
-#    Fly.io will inject REDIS_URL automatically, convert to CELERY_BROKER_URL
+# 2. REDIS: deployer redis/fly.toml (image redis:7-alpine, reseau prive), puis :
+#    flyctl secrets set CELERY_BROKER_URL="redis://kairos-broker.internal:6379/0" \
+#                       CELERY_RESULT_BACKEND="redis://kairos-broker.internal:6379/1" --app kairos-znpphq
 #
-# 3. CELERY WORKERS: NOT INCLUDED in this fly.toml
-#    Fly.io single-process model doesn't run background tasks.
-#    Options:
-#    a) Deploy workers separately on another service (second Fly app)
-#    b) Use Fly.io scheduled tasks + webhook to trigger processing
-#    c) Accept that only API runs; users upload, processing happens in background
-#       (requires external job queue)
-#    For MVP: option (a) is simplest — deploy "kairos-worker" as separate Fly app
-#    using same Dockerfile but different entrypoint:
-#    CMD = celery -A app.worker.celery_app worker --loglevel=info --concurrency=1
+# 3. CELERY WORKER: inclus ici comme groupe de process "worker" (voir
+#    [processes] plus haut). Fly lance une machine par groupe. Le volume
+#    media_storage reste reserve au groupe "web" (un volume Fly n'est pas
+#    partageable) : le worker persiste son travail en base, pas sur disque.
 #
 # 4. ENVIRONMENT VARIABLES:
 #    Secrets (never in this file):

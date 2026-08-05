@@ -223,7 +223,35 @@ def search(
         kept_starts.setdefault(vid, []).append(start_ms)
         if len(kept) >= limit:
             break
+
+    _mark_thumbnails(db, kept)
     return kept
+
+
+def _mark_thumbnails(db: Session, hits: list[dict]) -> None:
+    """Indique quels resultats disposent reellement d'une vignette.
+
+    Une vignette est generee par ffmpeg depuis la copie de lecture locale :
+    sans fichier, l'endpoint repond 404. Les resultats issus de la base
+    externe de transcription designent des medias que Kairos ne possede pas,
+    d'ou un 404 systematique. Une seule requete pour tous les ids retenus."""
+    if not hits:
+        return
+    ids = {h["rtvc_id"] for h in hits}
+    try:
+        rows = db.execute(
+            select(ProcessedMedia.rtvc_id).where(
+                ProcessedMedia.rtvc_id.in_(ids),
+                ProcessedMedia.playback_path.isnot(None),
+            )
+        ).all()
+    except Exception as exc:  # noqa: BLE001 - jamais bloquer la recherche
+        db.rollback()
+        log.warning("verification des vignettes impossible (%s)", exc)
+        return
+    with_thumb = {r[0] for r in rows}
+    for h in hits:
+        h["has_thumbnail"] = h["rtvc_id"] in with_thumb
 
 
 # Une suggestion doit tenir sur une ligne : on coupe à la frontière d'un mot

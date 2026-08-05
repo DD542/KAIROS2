@@ -121,10 +121,16 @@ function renderHits() {
       const why = h.matched === "mots"
         ? '<span class="badge exact" title="Trouvé par correspondance exacte du texte">texte exact</span>'
         : "";
-      return `<a class="hit" href="/video/${h.rtvc_id}?t=${h.start_seconds}">
-        <img class="hit-thumb" loading="lazy" alt=""
+      // Pas de vignette pour un media dont Kairos n'a pas le fichier (resultat
+      // venant de la base externe de transcription) : demander l'image
+      // donnerait un 404 a chaque resultat.
+      const thumb = h.has_thumbnail
+        ? `<img class="hit-thumb" loading="lazy" alt=""
              src="${API}/media/${h.rtvc_id}/thumbnail?t=${h.start_seconds}"
-             onerror="this.remove()" />
+             onerror="this.remove()" />`
+        : "";
+      return `<a class="hit" href="/video/${h.rtvc_id}?t=${h.start_seconds}">
+        ${thumb}
         <div class="hit-body">
           <div class="hit-head">
             ${badge}${why}
