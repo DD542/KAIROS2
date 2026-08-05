@@ -38,5 +38,11 @@ SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
 COPY backend/app ./app
 
+# Frontend statique (pas de build npm : HTML/JS/CSS servis tels quels).
+# En local, docker-compose le monte en bind-mount (./frontend:/frontend) ;
+# en prod (Fly), aucun bind-mount possible -> il doit etre dans l'image.
+# Chemin ABSOLU /frontend : doit correspondre a FRONTEND_DIR (app/config.py).
+COPY frontend /frontend
+
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
